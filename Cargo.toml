@@ -1,0 +1,12 @@
+[package]
+name = "sensor_client"
+version = "0.1.0"
+authors = ["Michael Watzko <michael@watzko.de>"]
+
+[dependencies]
+byteorder = { version = "1.2.1", default-features = false }
+random = "0.12.2"
+
+[dependencies.sensor_common]
+version = "*"
+path = "../sensor_common"
