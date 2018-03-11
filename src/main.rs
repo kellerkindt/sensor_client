@@ -5,7 +5,7 @@ extern crate sensor_common;
 
 
 use byteorder::ByteOrder;
-use byteorder::LittleEndian;
+use byteorder::NetworkEndian;
 
 use sensor_common::*;
 
@@ -20,7 +20,7 @@ fn main() {
     // Receives a single datagram message on the socket. If `buf` is too small to hold
     // the message, it will be cut off.
 
-    socket.set_read_timeout(Some(Duration::from_millis(900)));
+    socket.set_read_timeout(Some(Duration::from_millis(1100)));
     let mut random = random::default();
 
     loop {
@@ -45,17 +45,6 @@ fn main() {
                 },
                 _ => {},
             };
-            /*
-            if amt >= 4 {
-                let temp = LittleEndian::read_f32(&buf);
-                println!("   Temperatur: {}°C", temp);
-            } else {
-                print!("    ");
-                for b in &buf[..amt] {
-                    print!("{:x} ", b);
-                }
-                println!();
-            }*/
         }
     }
 }
@@ -69,7 +58,7 @@ fn handle_response(response: Response, reader: &mut Read) -> Result<(), Error> {
                 for _ in 0..7 {
                     print!(":{:02x}", reader.read_u8()?);
                 }
-                let temp = LittleEndian::read_f32(&[reader.read_u8()?, reader.read_u8()?, reader.read_u8()?, reader.read_u8()?]);
+                let temp = NetworkEndian::read_f32(&[reader.read_u8()?, reader.read_u8()?, reader.read_u8()?, reader.read_u8()?]);
                 println!(" with {:.4}°C", temp);
             }
         },
