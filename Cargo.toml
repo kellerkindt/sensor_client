@@ -10,3 +10,7 @@ random = "0.12.2"
 [dependencies.sensor_common]
 version = "*"
 path = "../sensor_common"
+
+[dependencies.onewire]
+version = "*"
+path = "../onewire"
