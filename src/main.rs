@@ -27,10 +27,10 @@ enum Value {
 }
 
 fn main() {
-    if std::env::args().len() > 1 {
+    if std::env::args().len() > 2 {
         let mut devices = Vec::new();
         let mut args = std::env::args().collect::<Vec<String>>();
-        for i in 1..std::env::args().len() {
+        for i in 2..std::env::args().len() {
             let arg = &args[i];
             if arg.len() == 23 {
                 devices.push(Device {
@@ -48,14 +48,15 @@ fn main() {
             }
         }
 
-        let mut socket = UdpSocket::bind("0.0.0.0:5354").unwrap();
+        let mut socket = UdpSocket::bind("0.0.0.0:0").unwrap();
 
-        socket.set_read_timeout(Some(Duration::from_millis(5000)));
+        socket.set_read_timeout(Some(Duration::from_millis(1000)));
 
         let mut random = random::default();
         let mut buffer = [0; 2048];
+        let mut error_code = 1;
 
-        loop {
+        'main: for _ in 0..5 {
             let size = Request::ReadSpecified(random.read::<u8>(), Bus::OneWire).write(&mut &mut buffer[..]).unwrap();
             let size = {
                 let mut pos = size;
@@ -67,34 +68,34 @@ fn main() {
                 pos
             };
 
-            println!("Requesting");
             let request_time = Instant::now();
-            socket.send_to(&buffer[..size], "192.168.3.222:51").expect("Failed to send");
+            socket.send_to(&buffer[..size], &args[1]).expect("Failed to send");
 
             if let Ok((amt, src)) = socket.recv_from(&mut buffer) {
                 let mut reader = &mut &buffer[..amt];
                 let response = Response::read(reader);
                 let duration = Instant::now().duration_since(request_time);
-                println!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
+                // println!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
                 match response {
                     Ok(response) => {
-                        if let Err(e) = handle_response(response, reader) {
+                        if let Err(e) = handle_response(response, reader, true) {
                             println!("  Handling failed: {:?}", e);
                         }
+                        error_code = 0;
+                        break 'main;
                     },
                     _ => {},
                 };
             }
         }
-
-        println!("{:?}", devices);
+        std::process::exit(error_code);
     } else {
         default();
     }
 }
 
 fn default() {
-    let mut socket = UdpSocket::bind("0.0.0.0:5354").unwrap();
+    let mut socket = UdpSocket::bind("0.0.0.0:0").unwrap();
 
     // Receives a single datagram message on the socket. If `buf` is too small to hold
     // the message, it will be cut off.
@@ -115,15 +116,17 @@ fn default() {
 
 
         println!("Requesting");
+        let request_time = Instant::now();
         socket.send_to(&buffer[..size], "192.168.3.222:51").expect("Failed to send");
 
         if let Ok((amt, src)) = socket.recv_from(&mut buffer) {
             let mut reader = &mut &buffer[..amt];
             let response = Response::read(reader);
-            println!("  Received from {}: {}, {:?}", src, amt, response);
+            let duration = Instant::now().duration_since(request_time);
+            println!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
             match response {
                 Ok(response) => {
-                    if let Err(e) = handle_response(response, reader) {
+                    if let Err(e) = handle_response(response, reader, false) {
                         println!("  Handling failed: {:?}", e);
                     }
                 },
@@ -134,7 +137,7 @@ fn default() {
 }
 
 
-fn handle_response(response: Response, reader: &mut Read) -> Result<Value, Error> {
+fn handle_response(response: Response, reader: &mut Read, silent: bool) -> Result<Value, Error> {
     Ok(match response {
         Response::Ok(id, format) if format == Format::AddressValuePairs(Type::Array(8), Type::F32) => {
             let mut devices = Vec::new();
@@ -151,12 +154,17 @@ fn handle_response(response: Response, reader: &mut Read) -> Result<Value, Error
                         reader.read_u8()?,
                     ]
                 };
-                print!("    {:02x}", device.address[0]);
-                for i in 0..7 {
-                    print!(":{:02x}", device.address[1+i]);
-                }
                 let temp = NetworkEndian::read_f32(&[reader.read_u8()?, reader.read_u8()?, reader.read_u8()?, reader.read_u8()?]);
-                println!(" with {:.4}°C", temp);
+
+                if !silent {
+                    print!("    {:02x}", device.address[0]);
+                    for i in 0..7 {
+                        print!(":{:02x}", device.address[1+i]);
+                    }
+                    println!(" with {:.4}°C", temp);
+                } else {
+                    println!("{}", temp);
+                }
                 devices.push((device, temp));
             }
             Value::OneWireDeviceValuePairs(devices)
@@ -176,11 +184,17 @@ fn handle_response(response: Response, reader: &mut Read) -> Result<Value, Error
                         reader.read_u8()?,
                     ]
                 };
-                print!("    {:02x}", device.address[0]);
-                for i in 0..7 {
-                    print!(":{:02x}", device.address[1+i]);
+                let temp = NetworkEndian::read_f32(&[reader.read_u8()?, reader.read_u8()?, reader.read_u8()?, reader.read_u8()?]);
+
+                if !silent {
+                    print!("    {:02x}", device.address[0]);
+                    for i in 0..7 {
+                        print!(":{:02x}", device.address[1+i]);
+                    }
+                    println!(" with {:.4}°C", temp);
+                } else {
+                    println!("{}", temp);
                 }
-                println!();
                 devices.push(device);
             }
             Value::OneWireDevices(devices)
