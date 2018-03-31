@@ -14,6 +14,7 @@ use onewire::Device;
 use sensor_common::*;
 
 use std::io;
+use std::net::Ipv4Addr;
 use std::net::UdpSocket;
 use std::net::ToSocketAddrs;
 use std::time::Duration;
@@ -115,6 +116,64 @@ fn main() {
                     }
                 }
             },
+            "set-network-mac" => {
+                if args.len() >= 4 {
+                    let arg = args[3].clone();
+                    let mac = [
+                        u8::from_str_radix(&arg[0..2], 16).unwrap(),
+                        u8::from_str_radix(&arg[3..5], 16).unwrap(),
+                        u8::from_str_radix(&arg[6..8], 16).unwrap(),
+                        u8::from_str_radix(&arg[9..11], 16).unwrap(),
+                        u8::from_str_radix(&arg[12..14], 16).unwrap(),
+                        u8::from_str_radix(&arg[15..17], 16).unwrap(),
+                    ];
+
+                    for _ in 0..5 {
+                        let request = Request::SetNetworkMac(random.read::<u8>(), mac);
+                        if let Ok((response, data)) = send_wait_response(&mut socket, address, &request) {
+                            if let Response::Ok(_, Format::Empty) = response {
+                                error_code = 0;
+
+                            } else {
+                                println!("Error: {:?}", response);
+                                error_code = 2;
+                            }
+                            break;
+                        }
+                    }
+                } else {
+                    println!("Missing mac address");
+                    error_code = 3;
+                }
+            },
+            "set-network-ip-subnet-gateway" => {
+                if args.len() >= 6 {
+                    use std::str::FromStr;
+                    let ip      = Ipv4Addr::from_str(&args[3]).unwrap();
+                    let subnet  = Ipv4Addr::from_str(&args[4]).unwrap();
+                    let gateway = Ipv4Addr::from_str(&args[5]).unwrap();
+
+
+                    for _ in 0..5 {
+                        let request = Request::SetNetworkIpSubnetGateway(random.read::<u8>(), ip.octets(), subnet.octets(), gateway.octets());
+                        if let Ok((response, data)) = send_wait_response(&mut socket, address, &request) {
+                            if let Response::Ok(_, Format::Empty) = response {
+                                error_code = 0;
+
+                            } else {
+                                println!("Error: {:?}", response);
+                                error_code = 2;
+                            }
+                            break;
+                        }
+                    }
+
+
+                } else {
+                    println!("Required <ip> <subnet> <gateway>");
+                    error_code = 3;
+                }
+            }
             _ => {
                 let mut devices = Vec::new();
                 for i in 2..std::env::args().len() {
