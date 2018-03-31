@@ -77,12 +77,33 @@ fn main() {
 
         match &args[2] as &str {
             "version" => {
-                error_code = 1;
                 for _ in 0..5 {
                     let request = Request::RetrieveVersionInformation(random.read::<u8>());
                     if let Ok((response, data)) = send_wait_response(&mut socket, address, &request) {
                         if let Response::Ok(_, Format::ValueOnly(Type::String(_))) = response {
                             println!("Version: {}", String::from_utf8_lossy(&data));
+                            error_code = 0;
+
+                        } else {
+                            println!("Error: {:?}", response);
+                            error_code = 2;
+                        }
+
+                        break;
+                    }
+                }
+            },
+            "get-network-conf" => {
+                for _ in 0..5 {
+                    let request = Request::RetrieveNetworkConfiguration(random.read::<u8>());
+                    if let Ok((response, data)) = send_wait_response(&mut socket, address, &request) {
+                        // 18 = 6 + 3*4
+                        if let Response::Ok(_, Format::ValueOnly(Type::Bytes(18))) = response {
+                            println!("MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", data[0], data[1], data[2], data[3], data[4], data[5]);
+                            println!();
+                            println!("IP:      {:}.{:}.{:}.{:}", data[ 6], data[ 7], data[ 8], data[ 9]);
+                            println!("Subnet:  {:}.{:}.{:}.{:}", data[10], data[11], data[12], data[13]);
+                            println!("Gateway: {:}.{:}.{:}.{:}", data[14], data[15], data[16], data[17]);
                             error_code = 0;
 
                         } else {
