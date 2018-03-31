@@ -27,7 +27,42 @@ enum Value {
 }
 
 fn main() {
-    if std::env::args().len() > 2 {
+    if std::env::args().len() == 2 {
+        let mut args = std::env::args().collect::<Vec<String>>();
+        let mut socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        socket.set_read_timeout(Some(Duration::from_millis(1000)));
+
+        let mut random = random::default();
+        let mut buffer = [0; 2048];
+        let mut error_code = 1;
+
+        'main: for _ in 0..5 {
+            let size = Request::DiscoverAllOnBus(random.read::<u8>(), Bus::OneWire).write(&mut &mut buffer[..]).unwrap();
+
+            let request_time = Instant::now();
+            socket.send_to(&buffer[..size], &args[1]).expect("Failed to send");
+
+            if let Ok((amt, src)) = socket.recv_from(&mut buffer) {
+                let mut reader = &mut &buffer[..amt];
+                let response = Response::read(reader);
+                let duration = Instant::now().duration_since(request_time);
+                // println!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
+                match response {
+                    Ok(response) => {
+                        let response_size = reader.available();
+                        if let Err(e) = handle_response(response, reader, true) {
+                            println!("  Handling(size: {}) failed: {:?}", response_size, e);
+                        }
+                        error_code = 0;
+                        break 'main;
+                    },
+                    _ => {},
+                };
+            }
+        }
+        std::process::exit(error_code);
+
+    } else if std::env::args().len() > 2 {
         let mut devices = Vec::new();
         let mut args = std::env::args().collect::<Vec<String>>();
         for i in 2..std::env::args().len() {
@@ -184,17 +219,12 @@ fn handle_response(response: Response, reader: &mut Read, silent: bool) -> Resul
                         reader.read_u8()?,
                     ]
                 };
-                let temp = NetworkEndian::read_f32(&[reader.read_u8()?, reader.read_u8()?, reader.read_u8()?, reader.read_u8()?]);
 
-                if !silent {
-                    print!("    {:02x}", device.address[0]);
-                    for i in 0..7 {
-                        print!(":{:02x}", device.address[1+i]);
-                    }
-                    println!(" with {:.4}°C", temp);
-                } else {
-                    println!("{}", temp);
+                print!("    {:02x}", device.address[0]);
+                for i in 0..7 {
+                    print!(":{:02x}", device.address[1+i]);
                 }
+                println!();
                 devices.push(device);
             }
             Value::OneWireDevices(devices)
