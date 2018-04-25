@@ -1,6 +1,6 @@
 [package]
 name = "sensor_client"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Michael Watzko <michael@watzko.de>"]
 description = "CLI to communicate with embedded sensors over ethernet via sensor_common protocol"
 keywords = ["ethernet", "cli"]
@@ -11,6 +11,7 @@ repository = "https://git.tallbyte.com/rust/sensor_client"
 [dependencies]
 byteorder = { version = "1.2.1", default-features = false }
 random = "0.12.2"
+clap = "2.31.2"
 
 [dependencies.sensor_common]
 version = "*"
