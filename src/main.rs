@@ -216,7 +216,7 @@ fn main() {
             exit_code = EXIT_CODE_SUCCESSFUL;
             break;
         } else {
-            println!("No response received...");
+            // println!("No response received...");
         }
     }
 
