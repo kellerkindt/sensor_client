@@ -49,6 +49,32 @@ fn main() {
 
     for _ in 0..5 {
         if match command {
+            Command::GetDevInfo(ip, port) => {
+                let request = Request::RetrieveDeviceInformation(random.read::<u8>());
+                if let Ok((response, data)) = send_wait_response(&mut socket, SocketAddr::new(IpAddr::V4(ip), port), &request) {
+                    if let Response::Ok(_, Format::ValueOnly(Type::Bytes(len))) = response {
+
+                        let frequency = NetworkEndian::read_u32(&data[0..]);
+                        let uptime = NetworkEndian::read_u32(&data[4..]);
+
+                        println!("Frequency: {} MHz", frequency / 1_000_000);
+                        println!("Uptime: {} ticks / {}s", uptime, uptime / frequency);
+                        println!("CPUID");
+                        println!(" - Implementer: {:02x}", data[5]);
+                        println!(" - Variant:     {:02x}", data[6]);
+                        println!(" - PartNumber:  {:04x}", NetworkEndian::read_u16(&data[7..]));
+                        println!(" - Revision:    {:02x}", data[9]);
+                        true
+
+                    } else {
+                        println!("Error: {:?}", response);
+                        exit_code = EXIT_CODE_DEVICE_ERROR;
+                        break;
+                    }
+                } else {
+                    false
+                }
+            },
             Command::GetVersion(ip, port) => {
                 let request = Request::RetrieveVersionInformation(random.read::<u8>());
                 if let Ok((response, data)) = send_wait_response(&mut socket, SocketAddr::new(IpAddr::V4(ip), port), &request) {
@@ -311,6 +337,7 @@ const ARG_ONEWIRE_ADDR : &'static str = "onewire-addr";
 
 const SUBCOMMAND_GET_VERSION : &'static str = "get-version";
 const SUBCOMMAND_GET_NET_CONF : &'static str = "get-network-config";
+const SUBCOMMAND_GET_INFO: &'static str = "get-info";
 const SUBCOMMAND_READ_ONEWIRE : &'static str = "onewire-read";
 const SUBCOMMAND_DISC_ONEWIRE : &'static str = "onewire-discover";
 const SUBCOMMAND_SET_IP_SUB_GW : &'static str = "set-network-ip-subnet-gateway";
@@ -319,6 +346,7 @@ const SUBCOMMAND_SET_MAC : &'static str = "set-network-mac";
 enum Command {
     GetVersion(Ipv4Addr, u16),
     GetNetConf(Ipv4Addr, u16),
+    GetDevInfo(Ipv4Addr, u16),
     ReadOneWire(Ipv4Addr, u16, Vec<String>),
     DiscOneWire(Ipv4Addr, u16),
     SetNetIpSubGate(Ipv4Addr, u16, Ipv4Addr, Ipv4Addr, Ipv4Addr),
@@ -357,6 +385,9 @@ fn read_command() -> Command {
         )
         .subcommand(SubCommand::with_name(SUBCOMMAND_GET_VERSION)
             .about("Reads the version from the specified device")
+        )
+        .subcommand(SubCommand::with_name(SUBCOMMAND_GET_INFO)
+            .about("Reads general information from the device")
         )
         .subcommand(SubCommand::with_name(SUBCOMMAND_GET_NET_CONF)
             .alias("get-net-conf")
@@ -418,6 +449,7 @@ fn read_command() -> Command {
     match matches.subcommand() {
         (SUBCOMMAND_GET_VERSION, _) => Command::GetVersion(ip, port),
         (SUBCOMMAND_GET_NET_CONF, _) => Command::GetNetConf(ip, port),
+        (SUBCOMMAND_GET_INFO, _) => Command::GetDevInfo(ip, port),
         (SUBCOMMAND_READ_ONEWIRE, m) => Command::ReadOneWire(
             ip,
             port,
