@@ -41,7 +41,7 @@ fn main() {
     let command = read_command();
 
     let mut socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-    socket.set_read_timeout(Some(Duration::from_millis(1000)));
+    socket.set_read_timeout(Some(Duration::from_millis(3000)));
 
     let mut random = random::default();
     let mut buffer = [0; 2048];
@@ -69,6 +69,7 @@ fn main() {
                     } else {
                         println!("Error: {:?}", response);
                         exit_code = EXIT_CODE_DEVICE_ERROR;
+
                         break;
                     }
                 } else {
@@ -176,6 +177,48 @@ fn main() {
                     false
                 }
             }
+
+            Command::ReadBus(ip, port, bus) => {
+                let size = Request::ReadSpecified(random.read::<u8>(), Bus::Custom(bus)).write(&mut &mut buffer[..]).unwrap();
+                socket.send_to(&buffer[..size], SocketAddr::new(IpAddr::V4(ip), port)).expect("Failed to send");
+
+
+                if let Ok((amt, src)) = socket.recv_from(&mut buffer) {
+                    let mut reader = &mut &buffer[..amt];
+                    let response = Response::read(reader);
+
+                    match response {
+                        Ok(response) => match response {
+                            Response::Ok(_, Format::ValueOnly(Type::F32)) => {
+                                while reader.available() >= 4 {
+                                    println!("{}", NetworkEndian::read_f32(&[
+                                        reader.read_u8().unwrap(),
+                                        reader.read_u8().unwrap(),
+                                        reader.read_u8().unwrap(),
+                                        reader.read_u8().unwrap(),
+                                    ]));
+                                }
+                                true
+                            }
+                            e => {
+                                println!("Err: {:?}", e);
+                                exit_code = EXIT_CODE_DEVICE_ERROR;
+                                false
+                            }
+                        },
+                        e => {
+                            println!("Err: {:?}", e);
+                            exit_code = EXIT_CODE_DEVICE_ERROR;
+                            false
+                        },
+                    }
+                } else {
+                    println!("timeout");
+                    exit_code = EXIT_CODE_DEVICE_ERROR;
+                    false
+                }
+            }
+
             Command::DiscOneWire(ip, port) => {
                 let size = Request::DiscoverAllOnBus(random.read::<u8>(), Bus::OneWire).write(&mut &mut buffer[..]).unwrap();
 
@@ -334,20 +377,24 @@ const ARG_GATEWAY : &'static str = "gateway";
 const ARG_MAC : &'static str = "mac";
 const ARG_PORT : &'static str = "port";
 const ARG_ONEWIRE_ADDR : &'static str = "onewire-addr";
+const ARG_BUS_ADDR : &'static str = "bus-addr";
 
 const SUBCOMMAND_GET_VERSION : &'static str = "get-version";
 const SUBCOMMAND_GET_NET_CONF : &'static str = "get-network-config";
 const SUBCOMMAND_GET_INFO: &'static str = "get-info";
 const SUBCOMMAND_READ_ONEWIRE : &'static str = "onewire-read";
+const SUBCOMMAND_READ_CUSTOM_BUS : &'static str = "custom-read";
 const SUBCOMMAND_DISC_ONEWIRE : &'static str = "onewire-discover";
 const SUBCOMMAND_SET_IP_SUB_GW : &'static str = "set-network-ip-subnet-gateway";
 const SUBCOMMAND_SET_MAC : &'static str = "set-network-mac";
 
+#[derive(Debug)]
 enum Command {
     GetVersion(Ipv4Addr, u16),
     GetNetConf(Ipv4Addr, u16),
     GetDevInfo(Ipv4Addr, u16),
     ReadOneWire(Ipv4Addr, u16, Vec<String>),
+    ReadBus(Ipv4Addr, u16, u8),
     DiscOneWire(Ipv4Addr, u16),
     SetNetIpSubGate(Ipv4Addr, u16, Ipv4Addr, Ipv4Addr, Ipv4Addr),
     SetNetMac(Ipv4Addr, u16, [u8; 6]),
@@ -404,6 +451,15 @@ fn read_command() -> Command {
                 .help("OneWire address")
             )
         )
+        .subcommand(SubCommand::with_name(SUBCOMMAND_READ_CUSTOM_BUS)
+            .about("Lets the specified device read values from the specified bus")
+            .arg(Arg::with_name(ARG_BUS_ADDR)
+                .required(true)
+                .multiple(false)
+                .value_name("BUS_ADDRESS")
+                .help("Bus address")
+            )
+        )
         .subcommand(SubCommand::with_name(SUBCOMMAND_DISC_ONEWIRE)
             .about("Lets the specified device discover all connected OneWire sensors")
         )
@@ -454,6 +510,11 @@ fn read_command() -> Command {
             ip,
             port,
             m.unwrap().values_of_lossy(ARG_ONEWIRE_ADDR).unwrap()
+        ),
+        (SUBCOMMAND_READ_CUSTOM_BUS, m) => Command::ReadBus(
+            ip,
+            port,
+            (&m.unwrap().value_of(ARG_BUS_ADDR).unwrap() as &str).parse::<u8>().unwrap(),
         ),
         (SUBCOMMAND_DISC_ONEWIRE, _) => Command::DiscOneWire(ip, port),
         (SUBCOMMAND_SET_IP_SUB_GW, m) => Command::SetNetIpSubGate(
