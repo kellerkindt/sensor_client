@@ -41,7 +41,7 @@ fn main() {
     let command = read_command();
 
     let mut socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-    socket.set_read_timeout(Some(Duration::from_millis(3000)));
+    socket.set_read_timeout(Some(Duration::from_millis(1000)));
 
     let mut random = random::default();
     let mut buffer = [0; 2048];
