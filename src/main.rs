@@ -67,7 +67,7 @@ fn main() {
                         true
 
                     } else {
-                        println!("Error: {:?}", response);
+                        eprintln!("Error: {:?}", response);
                         exit_code = EXIT_CODE_DEVICE_ERROR;
 
                         break;
@@ -84,7 +84,7 @@ fn main() {
                         true
 
                     } else {
-                        println!("Error: {:?}", response);
+                        eprintln!("Error: {:?}", response);
                         exit_code = EXIT_CODE_DEVICE_ERROR;
                         break;
                     }
@@ -105,7 +105,7 @@ fn main() {
                         exit_code = 0;
 
                     } else {
-                        println!("Error: {:?}", response);
+                        eprintln!("Error: {:?}", response);
                         exit_code = EXIT_CODE_DEVICE_ERROR;
                         break;
                     }
@@ -131,7 +131,7 @@ fn main() {
                             ]
                         })
                     } else {
-                        println!("Invalid OneWire address: {}", arg);
+                        eprintln!("Invalid OneWire address: {}", arg);
                         exit_code = EXIT_CODE_INVALID_PARAM;
                         break;
                     }
@@ -156,12 +156,12 @@ fn main() {
                     let mut reader = &mut &buffer[..amt];
                     let response = Response::read(reader);
                     let duration = Instant::now().duration_since(request_time);
-                    // println!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
+                    // eprintln!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
                     match response {
                         Ok(response) => {
                             if let Err(e) = handle_response(response, reader, true) {
                                 exit_code = EXIT_CODE_DEVICE_ERROR;
-                                println!("  Handling failed: {:?}", e);
+                                eprintln!("  Handling failed: {:?}", e);
                                 false
                             } else {
                                 true
@@ -201,19 +201,19 @@ fn main() {
                                 true
                             }
                             e => {
-                                println!("Err: {:?} - {:?}", e, reader.read_u8());
+                                eprintln!("Err: {:?} - {:?}", e, reader.read_u8());
                                 exit_code = EXIT_CODE_DEVICE_ERROR;
                                 false
                             }
                         },
                         e => {
-                            println!("Err: {:?}", e);
+                            eprintln!("Err: {:?}", e);
                             exit_code = EXIT_CODE_DEVICE_ERROR;
                             false
                         },
                     }
                 } else {
-                    println!("timeout");
+                    eprintln!("timeout");
                     exit_code = EXIT_CODE_DEVICE_ERROR;
                     false
                 }
@@ -229,12 +229,12 @@ fn main() {
                     let mut reader = &mut &buffer[..amt];
                     let response = Response::read(reader);
                     let duration = Instant::now().duration_since(request_time);
-                    // println!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
+                    // eprintln!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
                     match response {
                         Ok(response) => {
                             let response_size = reader.available();
                             if let Err(e) = handle_response(response, reader, true) {
-                                println!("  Handling(size: {}) failed: {:?}", response_size, e);
+                                eprintln!("  Handling(size: {}) failed: {:?}", response_size, e);
                                 exit_code = EXIT_CODE_DEVICE_ERROR;
                                 break;
                             } else {
@@ -257,7 +257,7 @@ fn main() {
                         true
 
                     } else {
-                        println!("Error: {:?}", response);
+                        eprintln!("Error: {:?}", response);
                         exit_code = EXIT_CODE_DEVICE_ERROR;
                         break
                     }
@@ -266,14 +266,14 @@ fn main() {
                 }
             }
             Command::SetNetMac(ip, port, mac) => {
-                println!("Sending {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                eprintln!("Sending {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
                 let request = Request::SetNetworkMac(random.read::<u8>(), mac);
                 if let Ok((response, data)) = send_wait_response(&mut socket, SocketAddr::new(IpAddr::V4(ip), port), &request) {
                     if let Response::Ok(_, Format::Empty) = response {
                         true
 
                     } else {
-                        println!("Error: {:?}", response);
+                        eprintln!("Error: {:?}", response);
                         exit_code = EXIT_CODE_DEVICE_ERROR;
                         break
                     }
@@ -285,7 +285,7 @@ fn main() {
             exit_code = EXIT_CODE_SUCCESSFUL;
             break;
         } else {
-            // println!("No response received...");
+            // eprintln!("No response received...");
         }
     }
 
