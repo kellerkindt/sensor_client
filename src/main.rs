@@ -201,7 +201,7 @@ fn main() {
                                 true
                             }
                             e => {
-                                println!("Err: {:?}", e);
+                                println!("Err: {:?} - {:?}", e, reader.read_u8());
                                 exit_code = EXIT_CODE_DEVICE_ERROR;
                                 false
                             }
