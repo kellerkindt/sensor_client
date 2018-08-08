@@ -1,12 +1,11 @@
 #![feature(duration_extras)]
 
-extern crate clap;
 extern crate byteorder;
+extern crate clap;
 extern crate random;
 
 extern crate onewire;
 extern crate sensor_common;
-
 
 use byteorder::ByteOrder;
 use byteorder::NetworkEndian;
@@ -14,390 +13,316 @@ use byteorder::NetworkEndian;
 use onewire::Device;
 use sensor_common::*;
 
-use std::io;
+use std::io::Error as IoError;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
-use std::net::UdpSocket;
 use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
+use std::net::UdpSocket;
 use std::time::Duration;
 
 use random::Source;
 
 use std::u8;
-use std::time::Instant;
 
-enum Value {
-    OneWireDevices(Vec<Device>),
-    OneWireDeviceValuePairs(Vec<(Device, f32)>),
+
+enum CommandError {
+    SensorError(Error),
+    IoError(IoError),
+    DeviceUnreachable,
+    NotImplemented,
+    NotAvailable,
 }
 
-const EXIT_CODE_SUCCESSFUL : i32 = 0;
-const EXIT_CODE_UNREACHABLE : i32 = -1;
-const EXIT_CODE_DEVICE_ERROR : i32 = -2;
-const EXIT_CODE_INVALID_PARAM : i32 = 1;
+impl From<Error> for CommandError {
+    fn from(e: Error) -> Self {
+        CommandError::SensorError(e)
+    }
+}
 
-fn main() {
-    let command = read_command();
+impl From<IoError> for CommandError {
+    fn from(e: IoError) -> Self {
+        CommandError::IoError(e)
+    }
+}
 
-    let mut socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-    socket.set_read_timeout(Some(Duration::from_millis(1000)));
-
-    let mut random = random::default();
-    let mut buffer = [0; 2048];
-    let mut exit_code = EXIT_CODE_UNREACHABLE;
-
-    for _ in 0..5 {
-        if match command {
-            Command::GetDevInfo(ip, port) => {
-                let request = Request::RetrieveDeviceInformation(random.read::<u8>());
-                if let Ok((response, data)) = send_wait_response(&mut socket, SocketAddr::new(IpAddr::V4(ip), port), &request) {
-                    if let Response::Ok(_, Format::ValueOnly(Type::Bytes(len))) = response {
-
-                        let frequency = NetworkEndian::read_u32(&data[0..]);
-                        let uptime = NetworkEndian::read_u32(&data[4..]);
-
-                        println!("Frequency: {} MHz", frequency / 1_000_000);
-                        println!("Uptime: {} ticks / {}s", uptime, uptime / frequency);
-                        println!("CPUID");
-                        println!(" - Implementer: {:02x}", data[5]);
-                        println!(" - Variant:     {:02x}", data[6]);
-                        println!(" - PartNumber:  {:04x}", NetworkEndian::read_u16(&data[7..]));
-                        println!(" - Revision:    {:02x}", data[9]);
-                        true
-
-                    } else {
-                        eprintln!("Error: {:?}", response);
-                        exit_code = EXIT_CODE_DEVICE_ERROR;
-
-                        break;
-                    }
-                } else {
-                    false
-                }
-            },
-            Command::GetVersion(ip, port) => {
-                let request = Request::RetrieveVersionInformation(random.read::<u8>());
-                if let Ok((response, data)) = send_wait_response(&mut socket, SocketAddr::new(IpAddr::V4(ip), port), &request) {
-                    if let Response::Ok(_, Format::ValueOnly(Type::String(_))) = response {
-                        println!("Version: {}", String::from_utf8_lossy(&data));
-                        true
-
-                    } else {
-                        eprintln!("Error: {:?}", response);
-                        exit_code = EXIT_CODE_DEVICE_ERROR;
-                        break;
-                    }
-                } else {
-                    false
-                }
-            },
-            Command::GetNetConf(ip, port) => {
-                let request = Request::RetrieveNetworkConfiguration(random.read::<u8>());
-                if let Ok((response, data)) = send_wait_response(&mut socket, SocketAddr::new(IpAddr::V4(ip), port), &request) {
-                    // 18 = 6 + 3*4
-                    if let Response::Ok(_, Format::ValueOnly(Type::Bytes(18))) = response {
-                        println!("MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", data[0], data[1], data[2], data[3], data[4], data[5]);
-                        println!();
-                        println!("IP:      {:}.{:}.{:}.{:}", data[ 6], data[ 7], data[ 8], data[ 9]);
-                        println!("Subnet:  {:}.{:}.{:}.{:}", data[10], data[11], data[12], data[13]);
-                        println!("Gateway: {:}.{:}.{:}.{:}", data[14], data[15], data[16], data[17]);
-                        exit_code = 0;
-
-                    } else {
-                        eprintln!("Error: {:?}", response);
-                        exit_code = EXIT_CODE_DEVICE_ERROR;
-                        break;
-                    }
-                    true
-                } else {
-                    false
-                }
-            },
-            Command::ReadOneWire(ip, port, ref addresses) => {
-                let mut devices = Vec::new();
-                for arg in addresses.iter() {
-                    if arg.len() == 23 {
-                        devices.push(Device {
-                            address: [
-                                u8::from_str_radix(&arg[0..2], 16).unwrap(),
-                                u8::from_str_radix(&arg[3..5], 16).unwrap(),
-                                u8::from_str_radix(&arg[6..8], 16).unwrap(),
-                                u8::from_str_radix(&arg[9..11], 16).unwrap(),
-                                u8::from_str_radix(&arg[12..14], 16).unwrap(),
-                                u8::from_str_radix(&arg[15..17], 16).unwrap(),
-                                u8::from_str_radix(&arg[18..20], 16).unwrap(),
-                                u8::from_str_radix(&arg[21..23], 16).unwrap(),
-                            ]
-                        })
-                    } else {
-                        eprintln!("Invalid OneWire address: {}", arg);
-                        exit_code = EXIT_CODE_INVALID_PARAM;
-                        break;
-                    }
-                }
-
-
-                let size = Request::ReadSpecified(random.read::<u8>(), Bus::OneWire).write(&mut &mut buffer[..]).unwrap();
-                let size = {
-                    let mut pos = size;
-                    for device in &devices {
-                        let sub_buffer = &mut buffer[pos..(pos+onewire::ADDRESS_BYTES as usize)];
-                        sub_buffer.copy_from_slice(&device.address);
-                        pos += onewire::ADDRESS_BYTES as usize;
-                    }
-                    pos
-                };
-
-                let request_time = Instant::now();
-                socket.send_to(&buffer[..size], SocketAddr::new(IpAddr::V4(ip), port)).expect("Failed to send");
-
-                if let Ok((amt, src)) = socket.recv_from(&mut buffer) {
-                    let mut reader = &mut &buffer[..amt];
-                    let response = Response::read(reader);
-                    let duration = Instant::now().duration_since(request_time);
-                    // eprintln!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
-                    match response {
-                        Ok(response) => {
-                            if let Err(e) = handle_response(response, reader, true) {
-                                exit_code = EXIT_CODE_DEVICE_ERROR;
-                                eprintln!("  Handling failed: {:?}", e);
-                                false
-                            } else {
-                                true
-                            }
-                        },
-                        _ => {
-                            exit_code = EXIT_CODE_DEVICE_ERROR;
-                            false
-                        },
-                    }
-                } else {
-                    exit_code = EXIT_CODE_DEVICE_ERROR;
-                    false
-                }
-            }
-
-            Command::ReadBus(ip, port, bus) => {
-                let size = Request::ReadSpecified(random.read::<u8>(), Bus::Custom(bus)).write(&mut &mut buffer[..]).unwrap();
-                socket.send_to(&buffer[..size], SocketAddr::new(IpAddr::V4(ip), port)).expect("Failed to send");
-
-
-                if let Ok((amt, src)) = socket.recv_from(&mut buffer) {
-                    let mut reader = &mut &buffer[..amt];
-                    let response = Response::read(reader);
-
-                    match response {
-                        Ok(response) => match response {
-                            Response::Ok(_, Format::ValueOnly(Type::F32)) => {
-                                while reader.available() >= 4 {
-                                    println!("{}", NetworkEndian::read_f32(&[
-                                        reader.read_u8().unwrap(),
-                                        reader.read_u8().unwrap(),
-                                        reader.read_u8().unwrap(),
-                                        reader.read_u8().unwrap(),
-                                    ]));
-                                }
-                                true
-                            }
-                            e => {
-                                eprintln!("Err: {:?} - {:?}", e, reader.read_u8());
-                                exit_code = EXIT_CODE_DEVICE_ERROR;
-                                false
-                            }
-                        },
-                        e => {
-                            eprintln!("Err: {:?}", e);
-                            exit_code = EXIT_CODE_DEVICE_ERROR;
-                            false
-                        },
-                    }
-                } else {
-                    eprintln!("timeout");
-                    exit_code = EXIT_CODE_DEVICE_ERROR;
-                    false
-                }
-            }
-
-            Command::DiscOneWire(ip, port) => {
-                let size = Request::DiscoverAllOnBus(random.read::<u8>(), Bus::OneWire).write(&mut &mut buffer[..]).unwrap();
-
-                let request_time = Instant::now();
-                socket.send_to(&buffer[..size], SocketAddr::new(IpAddr::V4(ip), port)).expect("Failed to send");
-
-                if let Ok((amt, src)) = socket.recv_from(&mut buffer) {
-                    let mut reader = &mut &buffer[..amt];
-                    let response = Response::read(reader);
-                    let duration = Instant::now().duration_since(request_time);
-                    // eprintln!("  Received from {}: {}bytes, {:?}, {}ms", src, amt, response, duration.as_secs() * 1000 + duration.subsec_millis() as u64);
-                    match response {
-                        Ok(response) => {
-                            let response_size = reader.available();
-                            if let Err(e) = handle_response(response, reader, true) {
-                                eprintln!("  Handling(size: {}) failed: {:?}", response_size, e);
-                                exit_code = EXIT_CODE_DEVICE_ERROR;
-                                break;
-                            } else {
-                                true
-                            }
-                        },
-                        _ => {
-                            exit_code = EXIT_CODE_DEVICE_ERROR;
-                            break;
-                        },
-                    }
-                } else {
-                    false
-                }
-            }
-            Command::SetNetIpSubGate(ip, port, new_ip, subnet, gateway) => {
-                let request = Request::SetNetworkIpSubnetGateway(random.read::<u8>(), new_ip.octets(), subnet.octets(), gateway.octets());
-                if let Ok((response, data)) = send_wait_response(&mut socket, SocketAddr::new(IpAddr::V4(ip), port), &request) {
-                    if let Response::Ok(_, Format::Empty) = response {
-                        true
-
-                    } else {
-                        eprintln!("Error: {:?}", response);
-                        exit_code = EXIT_CODE_DEVICE_ERROR;
-                        break
-                    }
-                } else {
-                    false
-                }
-            }
-            Command::SetNetMac(ip, port, mac) => {
-                eprintln!("Sending {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-                let request = Request::SetNetworkMac(random.read::<u8>(), mac);
-                if let Ok((response, data)) = send_wait_response(&mut socket, SocketAddr::new(IpAddr::V4(ip), port), &request) {
-                    if let Response::Ok(_, Format::Empty) = response {
-                        true
-
-                    } else {
-                        eprintln!("Error: {:?}", response);
-                        exit_code = EXIT_CODE_DEVICE_ERROR;
-                        break
-                    }
-                } else {
-                    false
-                }
-            }
-        } {
-            exit_code = EXIT_CODE_SUCCESSFUL;
-            break;
-        } else {
-            // eprintln!("No response received...");
+impl CommandError {
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            CommandError::SensorError(_) => 2,
+            CommandError::IoError(_) => 3,
+            CommandError::DeviceUnreachable => -1,
+            CommandError::NotImplemented => -2,
+            CommandError::NotAvailable => -3,
         }
     }
 
-    std::process::exit(exit_code);
-}
-
-fn send_wait_response<A: ToSocketAddrs>(udp: &mut UdpSocket, address: A, request: &Request) -> Result<(Response, Vec<u8>), io::Error> {
-    let mut buffer = [0u8; 2048];
-    let size = request.write(&mut &mut buffer[..]).unwrap();
-    udp.send_to(&buffer[..size], address)?;
-    let (amt, src) = udp.recv_from(&mut buffer)?;
-    let (response, offset) = {
-        let mut reader = &mut &buffer[..amt];
-        let before = reader.available();
-        let response = Response::read(reader).unwrap();
-        (response, before - reader.available())
-    };
-    Ok((response, Vec::from(&buffer[offset..])))
-}
-
-
-fn handle_response(response: Response, reader: &mut Read, silent: bool) -> Result<Value, Error> {
-    Ok(match response {
-        Response::Ok(id, format) if format == Format::AddressValuePairs(Type::Bytes(8), Type::F32) => {
-            let mut devices = Vec::new();
-            while reader.available() > 0 {
-                let device = Device {
-                    address: [
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                    ]
-                };
-                let temp = NetworkEndian::read_f32(&[reader.read_u8()?, reader.read_u8()?, reader.read_u8()?, reader.read_u8()?]);
-
-                if !silent {
-                    print!("    {:02x}", device.address[0]);
-                    for i in 0..7 {
-                        print!(":{:02x}", device.address[1+i]);
-                    }
-                    println!(" with {:.4}°C", temp);
-                } else {
-                    println!("{}", temp);
-                }
-                devices.push((device, temp));
-            }
-            Value::OneWireDeviceValuePairs(devices)
-        },
-        Response::Ok(id, format) if format == Format::AddressOnly(Type::Bytes(8)) => {
-            let mut devices = Vec::new();
-            while reader.available() > 0 {
-                let device = Device {
-                    address: [
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                        reader.read_u8()?,
-                    ]
-                };
-
-                print!("    {:02x}", device.address[0]);
-                for i in 0..7 {
-                    print!(":{:02x}", device.address[1+i]);
-                }
-                println!();
-                devices.push(device);
-            }
-            Value::OneWireDevices(devices)
+    pub fn err_msg(&self) -> String {
+        match self {
+            CommandError::SensorError(e) => format!("Protocol error: {:?}", e),
+            CommandError::IoError(e) => format!("Local IoError: {:?}", e),
+            CommandError::DeviceUnreachable => "The device is not reachable".into(),
+            CommandError::NotImplemented => "The device does not implement the request".into(),
+            CommandError::NotAvailable => "The request cannot be processed at this moment".into(),
         }
-        _ => return Err(Error::UnknownTypeIdentifier),
-    })
+    }
 }
 
+fn main() {
+    match handle_command(read_command(), 5) {
+        Err(e) => {
+            eprintln!("{}", e.err_msg());
+            std::process::exit(e.exit_code());
+        },
+        Ok(_) => std::process::exit(0),
+    }
+}
+
+fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandError> {
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.set_read_timeout(Some(Duration::from_millis(1000)))?;
+
+    let mut random = random::default();
+    let mut buffer = [0; 2048];
+
+    let address = SocketAddr::new(IpAddr::V4(*command.ip()), command.port());
+
+    for _ in 0..max_retries {
+        let request = command.new_request(random.read::<u8>());
+        let request_size = {
+            let write = &mut &mut buffer[..] as &mut Write;
+            request.write(write)? + command.append_payload(write)?
+        };
+
+        socket.send_to(&buffer[..request_size], address)?;
+        match socket.recv_from(&mut buffer[..]) {
+            Ok((size, address)) => {
+                let read = &mut &buffer[..size];
+                let response = Response::read(read)?;
+
+                if address.ip().ne(&IpAddr::V4(*command.ip())) {
+                    eprintln!("Received UDP message from unexpected address: {}", address);
+                    continue;
+                }
+
+                if response.id() != request.id() {
+                    eprintln!(
+                        "Received wrong response request-id: {}, response-id: {}",
+                        request.id(),
+                        response.id(),
+                    );
+                    continue;
+                }
+
+                match response {
+                    Response::NotImplemented(_id) => {
+                        return Err(CommandError::NotImplemented);
+                    }
+                    Response::NotAvailable(_) => {
+                        return Err(CommandError::NotAvailable);
+                    }
+                    Response::Ok(_response_id, format) => {
+                        let data = &buffer[(size - read.available())..];
+
+                        match format {
+                            Format::Empty => {}
+                            Format::ValueOnly(Type::Bytes(10)) => {
+                                let frequency = NetworkEndian::read_u32(&data[0..]);
+                                let uptime = NetworkEndian::read_u32(&data[4..]);
+
+                                println!("Frequency: {} MHz", frequency / 1_000_000);
+                                println!("Uptime: {} ticks / {}s", uptime, uptime / frequency);
+                                println!("CPUID");
+                                println!(" - Implementer: {:02x}", data[5]);
+                                println!(" - Variant:     {:02x}", data[6]);
+                                println!(
+                                    " - PartNumber:  {:04x}",
+                                    NetworkEndian::read_u16(&data[7..])
+                                );
+                                println!(" - Revision:    {:02x}", data[9]);
+                            }
+                            Format::ValueOnly(Type::Bytes(18)) => {
+                                println!(
+                                    "MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                                    data[0], data[1], data[2], data[3], data[4], data[5]
+                                );
+                                println!();
+                                println!(
+                                    "IP:      {:}.{:}.{:}.{:}",
+                                    data[6], data[7], data[8], data[9]
+                                );
+                                println!(
+                                    "Subnet:  {:}.{:}.{:}.{:}",
+                                    data[10], data[11], data[12], data[13]
+                                );
+                                println!(
+                                    "Gateway: {:}.{:}.{:}.{:}",
+                                    data[14], data[15], data[16], data[17]
+                                );
+                            }
+                            Format::ValueOnly(format_type) => while read.available() > 0 {
+                                print_generic_format_type(format_type, read, false)?;
+                                println!();
+                            },
+                            Format::AddressOnly(format_type) => while read.available() > 0 {
+                                print_generic_format_type(format_type, read, true)?;
+                                println!();
+                            },
+                            Format::AddressValuePairs(address_type, value_type) => {
+                                while read.available() > 0 {
+                                    print_generic_format_type(address_type, read, true)?;
+                                    print!(" ");
+                                    print_generic_format_type(value_type, read, false)?;
+                                    println!();
+                                }
+                            }
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+            Err(_) => {
+                // retry
+            }
+        }
+    }
+    Err(CommandError::DeviceUnreachable)
+}
+
+fn print_generic_format_type(
+    format_type: Type,
+    read: &mut Read,
+    is_address: bool,
+) -> Result<(), CommandError> {
+    match format_type {
+        Type::F32 => print!(
+            "{}",
+            NetworkEndian::read_f32(&[
+                read.read_u8()?,
+                read.read_u8()?,
+                read.read_u8()?,
+                read.read_u8()?,
+            ])
+        ),
+        Type::Bytes(len) => {
+            for i in 0..len {
+                if i > 0 && is_address {
+                    print!(":");
+                }
+                print!("{:02x}", read.read_u8()?);
+            }
+        }
+        Type::String(len) => {
+            let len = len as usize;
+            let mut vec = Vec::with_capacity(len);
+            for _ in 0..len {
+                vec.push(read.read_u8()?);
+            }
+            print!("{}", String::from_utf8_lossy(&vec[..len]));
+        }
+    }
+    Ok(())
+}
+
+use clap::{App, AppSettings, Arg, SubCommand};
 use std::str::FromStr;
-use clap::{Arg, App, SubCommand, AppSettings};
 
-const ARG_IP_ADDR : &'static str = "ip";
-const ARG_SUBNET : &'static str = "subnet";
-const ARG_GATEWAY : &'static str = "gateway";
-const ARG_MAC : &'static str = "mac";
-const ARG_PORT : &'static str = "port";
-const ARG_ONEWIRE_ADDR : &'static str = "onewire-addr";
-const ARG_BUS_ADDR : &'static str = "bus-addr";
+const ARG_IP_ADDR: &'static str = "ip";
+const ARG_SUBNET: &'static str = "subnet";
+const ARG_GATEWAY: &'static str = "gateway";
+const ARG_MAC: &'static str = "mac";
+const ARG_PORT: &'static str = "port";
+const ARG_ONEWIRE_ADDR: &'static str = "onewire-addr";
+const ARG_BUS_ADDR: &'static str = "bus-addr";
 
-const SUBCOMMAND_GET_VERSION : &'static str = "get-version";
-const SUBCOMMAND_GET_NET_CONF : &'static str = "get-network-config";
+const SUBCOMMAND_GET_VERSION: &'static str = "get-version";
+const SUBCOMMAND_GET_NET_CONF: &'static str = "get-network-config";
 const SUBCOMMAND_GET_INFO: &'static str = "get-info";
-const SUBCOMMAND_READ_ONEWIRE : &'static str = "onewire-read";
-const SUBCOMMAND_READ_CUSTOM_BUS : &'static str = "custom-read";
-const SUBCOMMAND_DISC_ONEWIRE : &'static str = "onewire-discover";
-const SUBCOMMAND_SET_IP_SUB_GW : &'static str = "set-network-ip-subnet-gateway";
-const SUBCOMMAND_SET_MAC : &'static str = "set-network-mac";
+const SUBCOMMAND_READ_ONEWIRE: &'static str = "onewire-read";
+const SUBCOMMAND_READ_CUSTOM_BUS: &'static str = "custom-read";
+const SUBCOMMAND_DISC_ONEWIRE: &'static str = "onewire-discover";
+const SUBCOMMAND_SET_IP_SUB_GW: &'static str = "set-network-ip-subnet-gateway";
+const SUBCOMMAND_SET_MAC: &'static str = "set-network-mac";
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum Command {
     GetVersion(Ipv4Addr, u16),
     GetNetConf(Ipv4Addr, u16),
     GetDevInfo(Ipv4Addr, u16),
-    ReadOneWire(Ipv4Addr, u16, Vec<String>),
+    ReadOneWire(Ipv4Addr, u16, Vec<Device>),
     ReadBus(Ipv4Addr, u16, u8),
     DiscOneWire(Ipv4Addr, u16),
     SetNetIpSubGate(Ipv4Addr, u16, Ipv4Addr, Ipv4Addr, Ipv4Addr),
     SetNetMac(Ipv4Addr, u16, [u8; 6]),
+}
+
+impl Command {
+    pub fn ip(&self) -> &Ipv4Addr {
+        match self {
+            Command::GetVersion(ip, _) => &ip,
+            Command::GetNetConf(ip, _) => &ip,
+            Command::GetDevInfo(ip, _) => &ip,
+            Command::ReadOneWire(ip, _, _) => &ip,
+            Command::ReadBus(ip, _, _) => &ip,
+            Command::DiscOneWire(ip, _) => &ip,
+            Command::SetNetIpSubGate(ip, _, _, _, _) => &ip,
+            Command::SetNetMac(ip, _, _) => &ip,
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        match self {
+            Command::GetVersion(_, port) => *port,
+            Command::GetNetConf(_, port) => *port,
+            Command::GetDevInfo(_, port) => *port,
+            Command::ReadOneWire(_, port, _) => *port,
+            Command::ReadBus(_, port, _) => *port,
+            Command::DiscOneWire(_, port) => *port,
+            Command::SetNetIpSubGate(_, port, _, _, _) => *port,
+            Command::SetNetMac(_, port, _) => *port,
+        }
+    }
+}
+
+pub trait RequestGenerator {
+    fn new_request(&self, id: u8) -> Request;
+
+    fn append_payload(&self, writer: &mut Write) -> Result<usize, Error>;
+}
+
+impl RequestGenerator for Command {
+    fn new_request(&self, id: u8) -> Request {
+        match self {
+            Command::GetVersion(_, _) => Request::RetrieveVersionInformation(id),
+            Command::GetNetConf(_, _) => Request::RetrieveNetworkConfiguration(id),
+            Command::GetDevInfo(_, _) => Request::RetrieveDeviceInformation(id),
+            Command::ReadOneWire(_, _, _) => Request::ReadSpecified(id, Bus::OneWire),
+            Command::ReadBus(_, _, bus) => Request::ReadSpecified(id, Bus::Custom(*bus)),
+            Command::DiscOneWire(_, _) => Request::DiscoverAllOnBus(id, Bus::OneWire),
+            Command::SetNetIpSubGate(_, _, ip, sub, gate) => {
+                Request::SetNetworkIpSubnetGateway(id, ip.octets(), sub.octets(), gate.octets())
+            }
+            Command::SetNetMac(_, _, mac) => Request::SetNetworkMac(id, mac.clone()),
+        }
+    }
+
+    fn append_payload(&self, writer: &mut Write) -> Result<usize, Error> {
+        Ok(match self {
+            Command::GetVersion(_, _) => 0,
+            Command::GetNetConf(_, _) => 0,
+            Command::GetDevInfo(_, _) => 0,
+            Command::ReadOneWire(_, _, devices) => {
+                let mut count = 0;
+                for device in devices.iter() {
+                    count += writer.write_all(&device.address)?;
+                }
+                count
+            }
+            Command::ReadBus(_, _, _) => 0,
+            Command::DiscOneWire(_, _) => 0,
+            Command::SetNetIpSubGate(_, _, _, _, _) => 0,
+            Command::SetNetMac(_, _, _) => 0,
+        })
+    }
 }
 
 fn read_command() -> Command {
@@ -409,93 +334,109 @@ fn read_command() -> Command {
         .setting(AppSettings::VersionlessSubcommands)
         .setting(AppSettings::NeedsSubcommandHelp)
         .setting(AppSettings::ColoredHelp)
-        .arg(Arg::with_name(ARG_IP_ADDR)
-            .short("i")
-            .long("ip")
-            .value_name("IP_ADDRESS")
-            .multiple(false)
-            .required(true)
-            .index(1)
-            .help("Ip address of the device")
-            .takes_value(true)
-        )
-        .arg(Arg::with_name(ARG_PORT)
-            .short("p")
-            .long("port")
-            .value_name("PORT_NUMBER")
-            .multiple(false)
-            .required(false)
-            .index(2)
-            .help("The port for the device")
-            .takes_value(true)
-            .default_value("51")
-        )
-        .subcommand(SubCommand::with_name(SUBCOMMAND_GET_VERSION)
-            .about("Reads the version from the specified device")
-        )
-        .subcommand(SubCommand::with_name(SUBCOMMAND_GET_INFO)
-            .about("Reads general information from the device")
-        )
-        .subcommand(SubCommand::with_name(SUBCOMMAND_GET_NET_CONF)
-            .alias("get-net-conf")
-            .alias("get-network-conf")
-            .alias("get-net-config")
-            .about("Reads the network configuration from the specified device")
-        )
-        .subcommand(SubCommand::with_name(SUBCOMMAND_READ_ONEWIRE)
-            .about("Lets the specified device read values from the specified OneWire sensors")
-            .arg(Arg::with_name(ARG_ONEWIRE_ADDR)
-                .required(true)
-                .multiple(true)
-                .value_name("SENSOR_ADDRESS")
-                .help("OneWire address")
-            )
-        )
-        .subcommand(SubCommand::with_name(SUBCOMMAND_READ_CUSTOM_BUS)
-            .about("Lets the specified device read values from the specified bus")
-            .arg(Arg::with_name(ARG_BUS_ADDR)
-                .required(true)
+        .arg(
+            Arg::with_name(ARG_IP_ADDR)
+                .short("i")
+                .long("ip")
+                .value_name("IP_ADDRESS")
                 .multiple(false)
-                .value_name("BUS_ADDRESS")
-                .help("Bus address")
-            )
-        )
-        .subcommand(SubCommand::with_name(SUBCOMMAND_DISC_ONEWIRE)
-            .about("Lets the specified device discover all connected OneWire sensors")
-        )
-        .subcommand(SubCommand::with_name(SUBCOMMAND_SET_IP_SUB_GW)
-            .about("Reconfigures the devices' ip, subnet and gateway addresses")
-            .arg(Arg::with_name(ARG_IP_ADDR)
                 .required(true)
                 .index(1)
-                .takes_value(true)
-                .value_name("IP")
-                .help("The new ip address for the device")
-            )
-            .arg(Arg::with_name(ARG_SUBNET)
-                .required(true)
+                .help("Ip address of the device")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name(ARG_PORT)
+                .short("p")
+                .long("port")
+                .value_name("PORT_NUMBER")
+                .multiple(false)
+                .required(false)
                 .index(2)
+                .help("The port for the device")
                 .takes_value(true)
-                .value_name("SUBNET")
-                .help("The new subnet address of the device")
-            )
-            .arg(Arg::with_name(ARG_GATEWAY)
-                .required(true)
-                .index(3)
-                .takes_value(true)
-                .value_name("GATEWAY")
-                .help("The new gateway address of the device")
-            )
+                .default_value("51"),
         )
-        .subcommand(SubCommand::with_name(SUBCOMMAND_SET_MAC)
-            .about("Reconfigures the devices' mac address")
-            .arg(Arg::with_name(ARG_MAC)
-                .required(true)
-                .index(1)
-                .takes_value(true)
-                .value_name("MAC")
-                .help("The new mac address for the device")
-            )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_GET_VERSION)
+                .about("Reads the version from the specified device"),
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_GET_INFO)
+                .about("Reads general information from the device"),
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_GET_NET_CONF)
+                .alias("get-net-conf")
+                .alias("get-network-conf")
+                .alias("get-net-config")
+                .about("Reads the network configuration from the specified device"),
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_READ_ONEWIRE)
+                .about("Lets the specified device read values from the specified OneWire sensors")
+                .arg(
+                    Arg::with_name(ARG_ONEWIRE_ADDR)
+                        .required(true)
+                        .multiple(true)
+                        .value_name("SENSOR_ADDRESS")
+                        .help("OneWire address"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_READ_CUSTOM_BUS)
+                .about("Lets the specified device read values from the specified bus")
+                .arg(
+                    Arg::with_name(ARG_BUS_ADDR)
+                        .required(true)
+                        .multiple(false)
+                        .value_name("BUS_ADDRESS")
+                        .help("Bus address"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_DISC_ONEWIRE)
+                .about("Lets the specified device discover all connected OneWire sensors"),
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_SET_IP_SUB_GW)
+                .about("Reconfigures the devices' ip, subnet and gateway addresses")
+                .arg(
+                    Arg::with_name(ARG_IP_ADDR)
+                        .required(true)
+                        .index(1)
+                        .takes_value(true)
+                        .value_name("IP")
+                        .help("The new ip address for the device"),
+                )
+                .arg(
+                    Arg::with_name(ARG_SUBNET)
+                        .required(true)
+                        .index(2)
+                        .takes_value(true)
+                        .value_name("SUBNET")
+                        .help("The new subnet address of the device"),
+                )
+                .arg(
+                    Arg::with_name(ARG_GATEWAY)
+                        .required(true)
+                        .index(3)
+                        .takes_value(true)
+                        .value_name("GATEWAY")
+                        .help("The new gateway address of the device"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_SET_MAC)
+                .about("Reconfigures the devices' mac address")
+                .arg(
+                    Arg::with_name(ARG_MAC)
+                        .required(true)
+                        .index(1)
+                        .takes_value(true)
+                        .value_name("MAC")
+                        .help("The new mac address for the device"),
+                ),
         )
         .get_matches();
 
@@ -509,12 +450,34 @@ fn read_command() -> Command {
         (SUBCOMMAND_READ_ONEWIRE, m) => Command::ReadOneWire(
             ip,
             port,
-            m.unwrap().values_of_lossy(ARG_ONEWIRE_ADDR).unwrap()
+            m.unwrap()
+                .values_of_lossy(ARG_ONEWIRE_ADDR)
+                .map(|addresses_str| {
+                    let mut devices = Vec::new();
+                    for address_str in addresses_str {
+                        devices.push(Device {
+                            address: [
+                                u8::from_str_radix(&address_str[0..2], 16).unwrap(),
+                                u8::from_str_radix(&address_str[3..5], 16).unwrap(),
+                                u8::from_str_radix(&address_str[6..8], 16).unwrap(),
+                                u8::from_str_radix(&address_str[9..11], 16).unwrap(),
+                                u8::from_str_radix(&address_str[12..14], 16).unwrap(),
+                                u8::from_str_radix(&address_str[15..17], 16).unwrap(),
+                                u8::from_str_radix(&address_str[18..20], 16).unwrap(),
+                                u8::from_str_radix(&address_str[21..23], 16).unwrap(),
+                            ],
+                        })
+                    }
+                    devices
+                })
+                .unwrap(),
         ),
         (SUBCOMMAND_READ_CUSTOM_BUS, m) => Command::ReadBus(
             ip,
             port,
-            (&m.unwrap().value_of(ARG_BUS_ADDR).unwrap() as &str).parse::<u8>().unwrap(),
+            (&m.unwrap().value_of(ARG_BUS_ADDR).unwrap() as &str)
+                .parse::<u8>()
+                .unwrap(),
         ),
         (SUBCOMMAND_DISC_ONEWIRE, _) => Command::DiscOneWire(ip, port),
         (SUBCOMMAND_SET_IP_SUB_GW, m) => Command::SetNetIpSubGate(
@@ -524,21 +487,17 @@ fn read_command() -> Command {
             Ipv4Addr::from_str(m.unwrap().value_of(ARG_SUBNET).unwrap()).unwrap(),
             Ipv4Addr::from_str(m.unwrap().value_of(ARG_GATEWAY).unwrap()).unwrap(),
         ),
-        (SUBCOMMAND_SET_MAC, m) => Command::SetNetMac(
-            ip,
-            port,
-            {
-                let mac = m.unwrap().value_of(ARG_MAC).unwrap();
-                [
-                    u8::from_str_radix(&mac[0..2], 16).unwrap(),
-                    u8::from_str_radix(&mac[3..5], 16).unwrap(),
-                    u8::from_str_radix(&mac[6..8], 16).unwrap(),
-                    u8::from_str_radix(&mac[9..11], 16).unwrap(),
-                    u8::from_str_radix(&mac[12..14], 16).unwrap(),
-                    u8::from_str_radix(&mac[15..17], 16).unwrap(),
-                ]
-            }
-        ),
-        _ => panic!("SubCommand not specified")
+        (SUBCOMMAND_SET_MAC, m) => Command::SetNetMac(ip, port, {
+            let mac = m.unwrap().value_of(ARG_MAC).unwrap();
+            [
+                u8::from_str_radix(&mac[0..2], 16).unwrap(),
+                u8::from_str_radix(&mac[3..5], 16).unwrap(),
+                u8::from_str_radix(&mac[6..8], 16).unwrap(),
+                u8::from_str_radix(&mac[9..11], 16).unwrap(),
+                u8::from_str_radix(&mac[12..14], 16).unwrap(),
+                u8::from_str_radix(&mac[15..17], 16).unwrap(),
+            ]
+        }),
+        _ => panic!("SubCommand not specified"),
     }
 }
