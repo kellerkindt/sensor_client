@@ -30,7 +30,7 @@ enum CommandError {
     IoError(IoError),
     DeviceUnreachable,
     NotImplemented,
-    NotAvailable,
+    NotAvailable(Option<Vec<u8>>),
 }
 
 impl From<Error> for CommandError {
@@ -52,7 +52,7 @@ impl CommandError {
             CommandError::IoError(_) => 3,
             CommandError::DeviceUnreachable => -1,
             CommandError::NotImplemented => -2,
-            CommandError::NotAvailable => -3,
+            CommandError::NotAvailable(_) => -3,
         }
     }
 
@@ -62,7 +62,41 @@ impl CommandError {
             CommandError::IoError(e) => format!("Local IoError: {:?}", e),
             CommandError::DeviceUnreachable => "The device is not reachable".into(),
             CommandError::NotImplemented => "The device does not implement the request".into(),
-            CommandError::NotAvailable => "The request cannot be processed at this moment".into(),
+            CommandError::NotAvailable(debug_info) => {
+                let msg = "The request cannot be processed at this moment".into();
+                match debug_info {
+                    None => msg,
+                    Some(vec) => {
+                        use std::ops::Add;
+                        let mut msg = msg.add("\n\n");
+                        let mut msg = msg.add("  Further debug information were provided:\n");
+                        let mut msg = msg.add(" ------+--------------------------+--------------------------+-----------\n");
+                        for i in 0..(vec.len() / 8) + 1 {
+                            msg = msg.add(&format!("   {:2}  : ", (i+1)));
+                            let from = i*8;
+                            let to = (i+1) * 8;
+                            for n in from..to.min(vec.len()) {
+                                msg = msg.add(&format!("{:02x} ", vec[n]));
+                            }
+                            for _ in to.min(vec.len())..to {
+                                msg = msg.add("   ");
+                            }
+                            msg = msg.add(" : ");
+                            for n in from..to.min(vec.len()) {
+                                msg = msg.add(&format!("{:2} ", vec[n]));
+                            }
+                            for _ in to.min(vec.len())..to {
+                                msg = msg.add("   ");
+                            }
+                            msg = msg.add(" : ");
+                            for n in from..to.min(vec.len()) {
+                                msg = msg.add(&format!("{} ", vec[n] as char));
+                            }
+                        }
+                        msg
+                    }
+                }
+            },
         }
     }
 }
@@ -96,7 +130,7 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
         socket.send_to(&buffer[..request_size], address)?;
         match socket.recv_from(&mut buffer[..]) {
             Ok((size, address)) => {
-                let read = &mut &buffer[..size];
+                let read = &mut &buffer[..size] as &mut Read;
                 let response = Response::read(read)?;
 
                 if address.ip().ne(&IpAddr::V4(*command.ip())) {
@@ -118,7 +152,15 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                         return Err(CommandError::NotImplemented);
                     }
                     Response::NotAvailable(_) => {
-                        return Err(CommandError::NotAvailable);
+                        let mut debug_info = None;
+                        if read.available() > 0 {
+                            let mut vec = Vec::new();
+                            while read.available() > 0 {
+                                vec.push(read.read_u8()?)
+                            }
+                            debug_info = Some(vec);
+                        }
+                        return Err(CommandError::NotAvailable(debug_info));
                     }
                     Response::Ok(_response_id, format) => {
                         let data = &buffer[(size - read.available())..];
