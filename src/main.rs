@@ -70,29 +70,7 @@ impl CommandError {
                         use std::ops::Add;
                         let mut msg = msg.add("\n\n");
                         let mut msg = msg.add("  Further debug information were provided:\n");
-                        let mut msg = msg.add(" ------+--------------------------+--------------------------+-----------\n");
-                        for i in 0..(vec.len() / 8) + 1 {
-                            msg = msg.add(&format!("   {:2}  : ", (i+1)));
-                            let from = i*8;
-                            let to = (i+1) * 8;
-                            for n in from..to.min(vec.len()) {
-                                msg = msg.add(&format!("{:02x} ", vec[n]));
-                            }
-                            for _ in to.min(vec.len())..to {
-                                msg = msg.add("   ");
-                            }
-                            msg = msg.add(" : ");
-                            for n in from..to.min(vec.len()) {
-                                msg = msg.add(&format!("{:2} ", vec[n]));
-                            }
-                            for _ in to.min(vec.len())..to {
-                                msg = msg.add("   ");
-                            }
-                            msg = msg.add(" : ");
-                            for n in from..to.min(vec.len()) {
-                                msg = msg.add(&format!("{} ", vec[n] as char));
-                            }
-                        }
+                        print_binary(&mut msg, &vec[..]);
                         msg
                     }
                 }
@@ -108,6 +86,33 @@ fn main() {
             std::process::exit(e.exit_code());
         },
         Ok(_) => std::process::exit(0),
+    }
+}
+
+fn print_binary(target: &mut String, binary: &[u8]) {
+    target.push_str(" ------+--------------------------+--------------------------+-----------\n");
+    for i in 0..(binary.len() / 8) + 1 {
+        target.push_str(&format!("  {:3}  : ", (i+1)));
+        let from = i*8;
+        let to = (i+1) * 8;
+        for n in from..to.min(binary.len()) {
+            target.push_str(&format!("{:02x} ", binary[n]));
+        }
+        for _ in to.min(binary.len())..to {
+            target.push_str("   ");
+        }
+        target.push_str(" : ");
+        for n in from..to.min(binary.len()) {
+            target.push_str(&format!("{:2} ", binary[n]));
+        }
+        for _ in to.min(binary.len())..to {
+            target.push_str("   ");
+        }
+        target.push_str(" : ");
+        for n in from..to.min(binary.len()) {
+            target.push_str(&format!("{} ", binary[n] as char));
+        }
+        target.push_str("\n");
     }
 }
 
@@ -167,20 +172,46 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
 
                         match format {
                             Format::Empty => {}
-                            Format::ValueOnly(Type::Bytes(10)) => {
-                                let frequency = NetworkEndian::read_u32(&data[0..]);
-                                let uptime = NetworkEndian::read_u32(&data[4..]);
+                            Format::ValueOnly(Type::Bytes(n)) => {
+                                if n == 48 {
+                                    // error on board on serialisation process causing overlap
+                                    let frequency = NetworkEndian::read_u32(&data[0..]);
+                                    let uptime = NetworkEndian::read_u32(&data[4..]);
 
-                                println!("Frequency: {} MHz", frequency / 1_000_000);
-                                println!("Uptime: {} ticks / {}s", uptime, uptime / frequency);
-                                println!("CPUID");
-                                println!(" - Implementer: {:02x}", data[5]);
-                                println!(" - Variant:     {:02x}", data[6]);
-                                println!(
-                                    " - PartNumber:  {:04x}",
-                                    NetworkEndian::read_u16(&data[7..])
-                                );
-                                println!(" - Revision:    {:02x}", data[9]);
+                                    println!("Frequency: {} MHz", frequency / 1_000_000);
+                                    println!("Uptime: {} ticks / {}s", uptime, uptime / frequency);
+                                    println!("CPUID");
+                                    println!(" - Implementer: {:02x}", data[5]);
+                                    println!(" - Variant:     {:02x}", data[6]);
+                                    println!(
+                                        " - PartNumber:  {:04x}",
+                                        NetworkEndian::read_u16(&data[7..])
+                                    );
+                                    println!(" - Revision:    {:02x}", data[9]);
+                                } else {
+                                    if n > 13 {
+                                        let frequency = NetworkEndian::read_u32(&data[0..]) as u64;
+                                        let uptime = NetworkEndian::read_u64(&data[4..]);
+
+                                        println!("Frequency: {} MHz", frequency / 1_000_000);
+                                        println!("Uptime: {} ticks / {}s", uptime, uptime / frequency);
+                                        println!("CPUID");
+                                        println!(" - Implementer: {:02x}", data[12]);
+                                        println!(" - Variant:     {:02x}", data[13]);
+                                        println!(
+                                            " - PartNumber:  {:04x}",
+                                            NetworkEndian::read_u16(&data[14..])
+                                        );
+                                        println!(" - Revision:    {:02x}", data[16]);
+                                        println!("MAGIC_EEPROM_CRC_START: 0x{:02x} ({})", data[17], data[17]);
+                                    }
+                                    if n > 18 {
+                                        let mut binary = String::new();
+                                        print_binary(&mut binary, &data[14..n as usize]);
+                                        println!("  Further information were provided:");
+                                        println!("{}", binary);
+                                    }
+                                }
                             }
                             Format::ValueOnly(Type::Bytes(18)) => {
                                 println!(
