@@ -194,7 +194,7 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                         let uptime = NetworkEndian::read_u64(&data[4..]);
 
                                         println!("Frequency: {} MHz", frequency / 1_000_000);
-                                        println!("Uptime: {} ticks / {}s", uptime, uptime / frequency);
+                                        println!("Uptime: {} ticks / {} s", uptime, uptime / frequency);
                                         println!("CPUID");
                                         println!(" - Implementer: {:02x}", data[12]);
                                         println!(" - Variant:     {:02x}", data[13]);
