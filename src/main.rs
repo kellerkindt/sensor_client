@@ -172,6 +172,25 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
 
                         match format {
                             Format::Empty => {}
+                            Format::ValueOnly(Type::Bytes(18)) => {
+                                println!(
+                                    "MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                                    data[0], data[1], data[2], data[3], data[4], data[5]
+                                );
+                                println!();
+                                println!(
+                                    "IP:      {:}.{:}.{:}.{:}",
+                                    data[6], data[7], data[8], data[9]
+                                );
+                                println!(
+                                    "Subnet:  {:}.{:}.{:}.{:}",
+                                    data[10], data[11], data[12], data[13]
+                                );
+                                println!(
+                                    "Gateway: {:}.{:}.{:}.{:}",
+                                    data[14], data[15], data[16], data[17]
+                                );
+                            }
                             Format::ValueOnly(Type::Bytes(n)) => {
                                 if n == 48 {
                                     // error on board on serialisation process causing overlap
@@ -193,8 +212,14 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                         let frequency = NetworkEndian::read_u32(&data[0..]) as u64;
                                         let uptime = NetworkEndian::read_u64(&data[4..]);
 
+                                        let secs = (uptime / frequency) % 60;
+                                        let mins = (uptime / frequency / 60) % 60;
+                                        let hour= (uptime / frequency / 60 / 60) % 24;
+                                        let days= (uptime / frequency / 60 / 60 / 24);
+
                                         println!("Frequency: {} MHz", frequency / 1_000_000);
                                         println!("Uptime: {} ticks / {} s", uptime, uptime / frequency);
+                                        println!("        {} days, {:02}:{:02}:{:02}", days, hour, mins, secs);
                                         println!("CPUID");
                                         println!(" - Implementer: {:02x}", data[12]);
                                         println!(" - Variant:     {:02x}", data[13]);
@@ -212,25 +237,6 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                         println!("{}", binary);
                                     }
                                 }
-                            }
-                            Format::ValueOnly(Type::Bytes(18)) => {
-                                println!(
-                                    "MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                                    data[0], data[1], data[2], data[3], data[4], data[5]
-                                );
-                                println!();
-                                println!(
-                                    "IP:      {:}.{:}.{:}.{:}",
-                                    data[6], data[7], data[8], data[9]
-                                );
-                                println!(
-                                    "Subnet:  {:}.{:}.{:}.{:}",
-                                    data[10], data[11], data[12], data[13]
-                                );
-                                println!(
-                                    "Gateway: {:}.{:}.{:}.{:}",
-                                    data[14], data[15], data[16], data[17]
-                                );
                             }
                             Format::ValueOnly(format_type) => while read.available() > 0 {
                                 print_generic_format_type(format_type, read, false)?;
