@@ -230,7 +230,8 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                         println!(" - Revision:    {:02x}", data[16]);
                                         println!("MAGIC_EEPROM_CRC_START: 0x{:02x} ({})", data[17], data[17]);
                                     }
-                                    if n > 18 {
+                                    // the 19th byte is 0x00 to distinguish it from NetworkConfig
+                                    if n > 19 {
                                         let mut binary = String::new();
                                         print_binary(&mut binary, &data[14..n as usize]);
                                         println!("  Further information were provided:");
