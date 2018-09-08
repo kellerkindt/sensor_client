@@ -1,6 +1,6 @@
 [package]
 name = "sensor_client"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Michael Watzko <michael@watzko.de>"]
 description = "CLI to communicate with embedded sensors over ethernet via sensor_common protocol"
 keywords = ["ethernet", "cli"]
