@@ -6,7 +6,7 @@ description = "CLI to communicate with embedded sensors over ethernet via sensor
 keywords = ["ethernet", "cli"]
 categories = ["network-programming", "command-line-interface"]
 license = "MIT OR Apache-2.0"
-repository = "https://git.tallbyte.com/rust/sensor_client"
+repository = "https://github.com/kellerkindt/sensor_client"
 
 [dependencies]
 byteorder = { version = "1.2.1", default-features = false }
