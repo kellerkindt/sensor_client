@@ -242,19 +242,35 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                         print_binary(&mut binary, &data[14..n as usize]);
                                         println!("  Further information were provided:");
                                         println!("{}", binary);
+                                    } else if n != 13 {
+                                        let mut binary = String::new();
+                                        print_binary(&mut binary, &data[..n as usize]);
+                                        println!("{}", binary);
                                     }
                                 }
                             }
-                            Format::ValueOnly(format_type) => while read.available() > 0 {
-                                println!("{}", format_generic_format_type(format_type, read, false)?);
-                            },
-                            Format::AddressOnly(format_type) => while read.available() > 0 {
-                                println!("{}", format_generic_format_type(format_type, read, true)?);
-                            },
+                            Format::ValueOnly(format_type) => {
+                                while read.available() > 0 {
+                                    println!(
+                                        "{}",
+                                        format_generic_format_type(format_type, read, false)?
+                                    );
+                                }
+                            }
+                            Format::AddressOnly(format_type) => {
+                                while read.available() > 0 {
+                                    println!(
+                                        "{}",
+                                        format_generic_format_type(format_type, read, true)?
+                                    );
+                                }
+                            }
                             Format::AddressValuePairs(address_type, value_type) => {
                                 while read.available() > 0 {
-                                    let formatted_address = format_generic_format_type(address_type, read, true)?;
-                                    let formatted_value = format_generic_format_type(value_type, read, false)?;
+                                    let formatted_address =
+                                        format_generic_format_type(address_type, read, true)?;
+                                    let formatted_value =
+                                        format_generic_format_type(value_type, read, false)?;
 
                                     if command.params().no_address {
                                         println!("{}", formatted_value);
@@ -323,6 +339,8 @@ const ARG_MAC: &'static str = "mac";
 const ARG_PORT: &'static str = "port";
 const ARG_ONEWIRE_ADDR: &'static str = "onewire-addr";
 const ARG_BUS_ADDR: &'static str = "bus-addr";
+const ARG_I2C_READ_LEN: &'static str = "i2c-read-len";
+const ARG_I2C_WRITE_BYTES: &'static str = "i2c-write-bytes";
 
 const SUBCOMMAND_GET_VERSION: &'static str = "get-version";
 const SUBCOMMAND_GET_NET_CONF: &'static str = "get-network-config";
@@ -330,6 +348,7 @@ const SUBCOMMAND_GET_INFO: &'static str = "get-info";
 const SUBCOMMAND_READ_ONEWIRE: &'static str = "onewire-read";
 const SUBCOMMAND_READ_CUSTOM_BUS: &'static str = "custom-read";
 const SUBCOMMAND_DISC_ONEWIRE: &'static str = "onewire-discover";
+const SUBCOMMAND_I2C_WRITE_READ: &'static str = "i2c-write-read";
 const SUBCOMMAND_SET_IP_SUB_GW: &'static str = "set-network-ip-subnet-gateway";
 const SUBCOMMAND_SET_MAC: &'static str = "set-network-mac";
 
@@ -343,6 +362,7 @@ enum Command {
     ReadOneWire(Parameter, Vec<Device>),
     ReadBus(Parameter, u8),
     DiscOneWire(Parameter),
+    I2cWriteRead(Parameter, Vec<u8>, u8),
     SetNetIpSubGate(Parameter, Ipv4Addr, Ipv4Addr, Ipv4Addr),
     SetNetMac(Parameter, [u8; 6]),
 }
@@ -356,6 +376,7 @@ impl Command {
             Command::ReadOneWire(params, _) => &params,
             Command::ReadBus(params, _) => &params,
             Command::DiscOneWire(params) => &params,
+            Command::I2cWriteRead(params, _, _) => &params,
             Command::SetNetIpSubGate(params, _, _, _) => &params,
             Command::SetNetMac(params, _) => &params,
         }
@@ -377,6 +398,7 @@ impl RequestGenerator for Command {
             Command::ReadOneWire(_, _) => Request::ReadSpecified(id, Bus::OneWire),
             Command::ReadBus(_, bus) => Request::ReadSpecified(id, Bus::Custom(*bus)),
             Command::DiscOneWire(_) => Request::DiscoverAllOnBus(id, Bus::OneWire),
+            Command::I2cWriteRead(..) => Request::ReadSpecified(id, Bus::I2C),
             Command::SetNetIpSubGate(_, ip, sub, gate) => {
                 Request::SetNetworkIpSubnetGateway(id, ip.octets(), sub.octets(), gate.octets())
             }
@@ -398,6 +420,9 @@ impl RequestGenerator for Command {
             }
             Command::ReadBus(_, _) => 0,
             Command::DiscOneWire(_) => 0,
+            Command::I2cWriteRead(_, write, read_len) => {
+                writer.write_u8(*read_len)? + writer.write_all(&write[..])?
+            }
             Command::SetNetIpSubGate(_, _, _, _) => 0,
             Command::SetNetMac(_, _) => 0,
         })
@@ -466,7 +491,25 @@ fn read_command() -> Command {
                 .about("Reads the network configuration from the specified device"),
         )
         .subcommand(
-            SubCommand::with_name(SUBCOMMAND_READ_ONEWIRE)
+            SubCommand::with_name(SUBCOMMAND_I2C_WRITE_READ)
+                .about("Lets the specified device write bytes to the i2c channel and then transmit the result back")
+                .arg(
+                    Arg::with_name(ARG_I2C_READ_LEN)
+                        .required(true)
+                        .multiple(false)
+                        .value_name("I2C_READ_LEN")
+                        .help("Amount of bytes to read from the i2c device"),
+                )
+                .arg(
+                    Arg::with_name(ARG_I2C_WRITE_BYTES)
+                        .required(true)
+                        .multiple(true)
+                        .value_name("I2C_WRITE_BYTES")
+                        .help("Bytes (hex coded, without leading 0x) to write on the i2c bus"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_I2C_WRITE_READ)
                 .about("Lets the specified device read values from the specified OneWire sensors")
                 .arg(
                     Arg::with_name(ARG_ONEWIRE_ADDR)
@@ -566,6 +609,22 @@ fn read_command() -> Command {
                     }
                     devices
                 })
+                .unwrap(),
+        ),
+        (SUBCOMMAND_I2C_WRITE_READ, m) => Command::I2cWriteRead(
+            params,
+            m.unwrap()
+                .values_of_lossy(ARG_I2C_WRITE_BYTES)
+                .map(|bytes_char| {
+                    bytes_char
+                        .into_iter()
+                        .map(|byte_char| u8::from_str_radix(&byte_char, 16).unwrap())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap(),
+            m.unwrap()
+                .value_of_lossy(ARG_I2C_READ_LEN)
+                .map(|len| len.parse::<u8>().unwrap())
                 .unwrap(),
         ),
         (SUBCOMMAND_READ_CUSTOM_BUS, m) => Command::ReadBus(
