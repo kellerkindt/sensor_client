@@ -86,7 +86,7 @@ fn main() {
 }
 
 fn print_binary(target: &mut String, binary: &[u8]) {
-    target.push_str(" ------+--------------------------+--------------------------+-----------\n");
+    target.push_str(" ------+--------------------------+----------------------------------+------------------- \n");
     for i in 0..(binary.len() / 8) + 1 {
         target.push_str(&format!("  {:3}  : ", (i + 1)));
         let from = i * 8;
@@ -97,16 +97,20 @@ fn print_binary(target: &mut String, binary: &[u8]) {
         for _ in to.min(binary.len())..to {
             target.push_str("   ");
         }
-        target.push_str(" : ");
+        target.push_str("   ");
         for n in from..to.min(binary.len()) {
-            target.push_str(&format!("{:2} ", binary[n]));
+            target.push_str(&format!("{:>3} ", binary[n]));
         }
         for _ in to.min(binary.len())..to {
-            target.push_str("   ");
+            target.push_str("    ");
         }
-        target.push_str(" : ");
+        target.push_str("   ");
         for n in from..to.min(binary.len()) {
-            target.push_str(&format!("{} ", binary[n] as char));
+            if (binary[n] as char).is_alphanumeric() {
+                target.push_str(&format!("{} ", binary[n] as char));
+            } else {
+                target.push_str(". ");
+            }
         }
         target.push_str("\n");
     }
@@ -123,6 +127,7 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
 
     for _ in 0..max_retries {
         let request = command.new_request(random.read::<u8>());
+        let id = request.id();
         let request_size = {
             let write = &mut &mut buffer[..] as &mut Write;
             request.write(write)? + command.append_payload(write)?
@@ -168,7 +173,7 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
 
                         match format {
                             Format::Empty => {}
-                            Format::ValueOnly(Type::Bytes(18)) => {
+                            Format::ValueOnly(Type::Bytes(18)) if request == Request::RetrieveNetworkConfiguration(id)  => {
                                 println!(
                                     "MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
                                     data[0], data[1], data[2], data[3], data[4], data[5]
@@ -187,7 +192,7 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                     data[14], data[15], data[16], data[17]
                                 );
                             }
-                            Format::ValueOnly(Type::Bytes(n)) => {
+                            Format::ValueOnly(Type::Bytes(n)) if request == Request::RetrieveDeviceInformation(id)  => {
                                 if n == 48 {
                                     // error on board on serialisation process causing overlap
                                     let frequency = NetworkEndian::read_u32(&data[0..]);
@@ -242,12 +247,13 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                         print_binary(&mut binary, &data[14..n as usize]);
                                         println!("  Further information were provided:");
                                         println!("{}", binary);
-                                    } else if n != 13 {
-                                        let mut binary = String::new();
-                                        print_binary(&mut binary, &data[..n as usize]);
-                                        println!("{}", binary);
                                     }
                                 }
+                            }
+                            Format::ValueOnly(Type::Bytes(n)) => {
+                                let mut binary = String::new();
+                                print_binary(&mut binary, &data[..n as usize]);
+                                println!("{}", binary);
                             }
                             Format::ValueOnly(format_type) => {
                                 while read.available() > 0 {
