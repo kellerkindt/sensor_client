@@ -129,14 +129,14 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
         let request = command.new_request(random.read::<u8>());
         let id = request.id();
         let request_size = {
-            let write = &mut &mut buffer[..] as &mut Write;
+            let write = &mut &mut buffer[..];
             request.write(write)? + command.append_payload(write)?
         };
 
         socket.send_to(&buffer[..request_size], address)?;
         match socket.recv_from(&mut buffer[..]) {
             Ok((size, address)) => {
-                let read = &mut &buffer[..size] as &mut Read;
+                let read = &mut &buffer[..size];
                 let response = Response::read(read)?;
 
                 if address.ip().ne(&command.params().address.ip()) {
@@ -169,11 +169,14 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                         return Err(CommandError::NotAvailable(debug_info));
                     }
                     Response::Ok(_response_id, format) => {
-                        let data = &buffer[(size - read.available())..];
+                        let read_available = read.available();
+                        let data = &buffer[(size - read_available)..];
 
                         match format {
                             Format::Empty => {}
-                            Format::ValueOnly(Type::Bytes(18)) if request == Request::RetrieveNetworkConfiguration(id)  => {
+                            Format::ValueOnly(Type::Bytes(18))
+                                if request == Request::RetrieveNetworkConfiguration(id) =>
+                            {
                                 println!(
                                     "MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
                                     data[0], data[1], data[2], data[3], data[4], data[5]
@@ -192,7 +195,9 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                     data[14], data[15], data[16], data[17]
                                 );
                             }
-                            Format::ValueOnly(Type::Bytes(n)) if request == Request::RetrieveDeviceInformation(id)  => {
+                            Format::ValueOnly(Type::Bytes(n))
+                                if request == Request::RetrieveDeviceInformation(id) =>
+                            {
                                 if n == 48 {
                                     // error on board on serialisation process causing overlap
                                     let frequency = NetworkEndian::read_u32(&data[0..]);
