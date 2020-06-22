@@ -64,7 +64,7 @@ impl CommandError {
                     None => msg,
                     Some(vec) => {
                         use std::ops::Add;
-                        let mut msg = msg.add("\n\n");
+                        let msg = msg.add("\n\n");
                         let mut msg = msg.add("  Further debug information were provided:\n");
                         print_binary(&mut msg, &vec[..]);
                         msg
@@ -305,7 +305,7 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
 
 fn format_generic_format_type(
     format_type: Type,
-    read: &mut Read,
+    read: &mut impl Read,
     is_address: bool,
 ) -> Result<String, CommandError> {
     Ok(match format_type {
@@ -356,6 +356,7 @@ const ARG_I2C_WRITE_BYTES: &'static str = "i2c-write-bytes";
 const SUBCOMMAND_GET_VERSION: &'static str = "get-version";
 const SUBCOMMAND_GET_NET_CONF: &'static str = "get-network-config";
 const SUBCOMMAND_GET_INFO: &'static str = "get-info";
+const SUBCOMMAND_GET_ERR_DUMP: &'static str = "get-error-dump";
 const SUBCOMMAND_READ_ONEWIRE: &'static str = "onewire-read";
 const SUBCOMMAND_READ_CUSTOM_BUS: &'static str = "custom-read";
 const SUBCOMMAND_DISC_ONEWIRE: &'static str = "onewire-discover";
@@ -370,6 +371,7 @@ enum Command {
     GetVersion(Parameter),
     GetNetConf(Parameter),
     GetDevInfo(Parameter),
+    GetErrDump(Parameter),
     ReadOneWire(Parameter, Vec<Device>),
     ReadBus(Parameter, u8),
     DiscOneWire(Parameter),
@@ -384,6 +386,7 @@ impl Command {
             Command::GetVersion(params) => &params,
             Command::GetNetConf(params) => &params,
             Command::GetDevInfo(params) => &params,
+            Command::GetErrDump(params) => &params,
             Command::ReadOneWire(params, _) => &params,
             Command::ReadBus(params, _) => &params,
             Command::DiscOneWire(params) => &params,
@@ -397,7 +400,7 @@ impl Command {
 pub trait RequestGenerator {
     fn new_request(&self, id: u8) -> Request;
 
-    fn append_payload(&self, writer: &mut Write) -> Result<usize, Error>;
+    fn append_payload(&self, writer: &mut impl Write) -> Result<usize, Error>;
 }
 
 impl RequestGenerator for Command {
@@ -406,6 +409,7 @@ impl RequestGenerator for Command {
             Command::GetVersion(_) => Request::RetrieveVersionInformation(id),
             Command::GetNetConf(_) => Request::RetrieveNetworkConfiguration(id),
             Command::GetDevInfo(_) => Request::RetrieveDeviceInformation(id),
+            Command::GetErrDump(_) => Request::RetrieveErrorDump(id),
             Command::ReadOneWire(_, _) => Request::ReadSpecified(id, Bus::OneWire),
             Command::ReadBus(_, bus) => Request::ReadSpecified(id, Bus::Custom(*bus)),
             Command::DiscOneWire(_) => Request::DiscoverAllOnBus(id, Bus::OneWire),
@@ -417,10 +421,11 @@ impl RequestGenerator for Command {
         }
     }
 
-    fn append_payload(&self, writer: &mut Write) -> Result<usize, Error> {
+    fn append_payload(&self, writer: &mut impl Write) -> Result<usize, Error> {
         Ok(match self {
             Command::GetVersion(_) => 0,
             Command::GetNetConf(_) => 0,
+            Command::GetErrDump(_) => 0,
             Command::GetDevInfo(_) => 0,
             Command::ReadOneWire(_, devices) => {
                 let mut count = 0;
@@ -500,6 +505,13 @@ fn read_command() -> Command {
                 .alias("get-network-conf")
                 .alias("get-net-config")
                 .about("Reads the network configuration from the specified device"),
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_GET_ERR_DUMP)
+                .alias("get-err-dmp")
+                .alias("get-error-dump")
+                .alias("get-err")
+                .about("Reads the error dump from the specified device if available"),
         )
         .subcommand(
             SubCommand::with_name(SUBCOMMAND_I2C_WRITE_READ)
@@ -598,6 +610,7 @@ fn read_command() -> Command {
         (SUBCOMMAND_GET_VERSION, _) => Command::GetVersion(params),
         (SUBCOMMAND_GET_NET_CONF, _) => Command::GetNetConf(params),
         (SUBCOMMAND_GET_INFO, _) => Command::GetDevInfo(params),
+        (SUBCOMMAND_GET_ERR_DUMP, _) => Command::GetErrDump(params),
         (SUBCOMMAND_READ_ONEWIRE, m) => Command::ReadOneWire(
             params,
             m.unwrap()
