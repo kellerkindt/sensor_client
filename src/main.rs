@@ -246,12 +246,27 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                             data[17], data[17]
                                         );
                                     }
+
                                     // the 19th byte is 0x00 to distinguish it from NetworkConfig
                                     if n > 19 {
-                                        let mut binary = String::new();
-                                        print_binary(&mut binary, &data[14..n as usize]);
-                                        println!("  Further information were provided:");
-                                        println!("{}", binary);
+                                        let module_name_len = data[19];
+                                        println!(
+                                            "FeaturedModule: {}",
+                                            String::from_utf8_lossy(
+                                                &data[20..20 + usize::from(module_name_len)]
+                                            )
+                                        );
+
+                                        if n > 20 + module_name_len {
+                                            let mut binary = String::new();
+                                            print_binary(
+                                                &mut binary,
+                                                &data
+                                                    [20 + usize::from(module_name_len)..n as usize],
+                                            );
+                                            println!("  Further information were provided:");
+                                            println!("{}", binary);
+                                        }
                                     }
                                 }
                             }
