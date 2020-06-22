@@ -206,13 +206,10 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                     println!("Frequency: {} MHz", frequency / 1_000_000);
                                     println!("Uptime: {} ticks / {}s", uptime, uptime / frequency);
                                     println!("CPUID");
-                                    println!(" - Implementer: {:02x}", data[5]);
-                                    println!(" - Variant:     {:02x}", data[6]);
-                                    println!(
-                                        " - PartNumber:  {:04x}",
-                                        NetworkEndian::read_u16(&data[7..])
-                                    );
-                                    println!(" - Revision:    {:02x}", data[9]);
+                                    println!(" - Implementer: 0x{:02x}", data[5]);
+                                    println!(" - Variant:     0x{:02x}", data[6]);
+                                    println!(" - PartNumber:  0x{:02x} 0x{:02x}", data[7], data[8]);
+                                    println!(" - Revision:    0x{:02x}", data[9]);
                                 } else {
                                     if n > 13 {
                                         let frequency = NetworkEndian::read_u32(&data[0..]) as u64;
@@ -234,13 +231,13 @@ fn handle_command(command: Command, max_retries: usize) -> Result<(), CommandErr
                                             days, hour, mins, secs
                                         );
                                         println!("CPUID");
-                                        println!(" - Implementer: {:02x}", data[12]);
-                                        println!(" - Variant:     {:02x}", data[13]);
+                                        println!(" - Implementer: 0x{:02x}", data[12]);
+                                        println!(" - Variant:     0x{:02x}", data[13]);
                                         println!(
-                                            " - PartNumber:  {:04x}",
-                                            NetworkEndian::read_u16(&data[14..])
+                                            " - PartNumber:  0x{:02x} 0x{:02x}",
+                                            data[14], data[15]
                                         );
-                                        println!(" - Revision:    {:02x}", data[16]);
+                                        println!(" - Revision:    0x{:02x}", data[16]);
                                         println!(
                                             "MAGIC_EEPROM_CRC_START: 0x{:02x} ({})",
                                             data[17], data[17]
