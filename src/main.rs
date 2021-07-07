@@ -19,8 +19,6 @@ use std::time::Duration;
 
 use random::Source;
 
-use std::u8;
-
 enum CommandError {
     SensorError(Error),
     IoError(IoError),
@@ -320,6 +318,15 @@ fn format_generic_format_type(
     read: &mut impl Read,
     is_address: bool,
 ) -> Result<String, CommandError> {
+    macro_rules! read_impl_for {
+        ($ty:ty) => {{
+            let mut bytes = <$ty>::to_be_bytes(0);
+            read.read_all(&mut bytes)?;
+            let value = <$ty>::from_be_bytes(bytes);
+            format!("{}", value)
+        }};
+    }
+
     Ok(match format_type {
         Type::F32 => format!(
             "{}",
@@ -348,6 +355,45 @@ fn format_generic_format_type(
             }
             String::from_utf8_lossy(&vec[..len]).into()
         }
+        Type::PropertyId => {
+            let len = usize::from(read.read_u8()?);
+            let mut string = String::with_capacity((3 * len).saturating_sub(1));
+            for i in 0..len {
+                use std::fmt::Write;
+                write!(string, "{:02x}", read.read_u8()?).unwrap();
+                if i + 1 < len {
+                    string.push(':');
+                }
+            }
+            string
+        }
+        Type::DynString => {
+            let len = read.read_u8()?;
+            if len > 0 {
+                format_generic_format_type(Type::String(len), read, is_address)?
+            } else {
+                String::new()
+            }
+        }
+        Type::DynBytes => {
+            let len = read.read_u8()?;
+            if len > 0 {
+                format_generic_format_type(Type::Bytes(len), read, is_address)?
+            } else {
+                String::new()
+            }
+        }
+
+        Type::U128 => read_impl_for!(u128),
+        Type::I128 => read_impl_for!(i128),
+        Type::U64 => read_impl_for!(u64),
+        Type::I64 => read_impl_for!(i64),
+        Type::U32 => read_impl_for!(u32),
+        Type::I32 => read_impl_for!(i32),
+        Type::U16 => read_impl_for!(u16),
+        Type::I16 => read_impl_for!(i16),
+        Type::U8 => read_impl_for!(u8),
+        Type::I8 => read_impl_for!(i8),
     })
 }
 
@@ -359,6 +405,7 @@ const ARG_IP_ADDR: &'static str = "ip";
 const ARG_SUBNET: &'static str = "subnet";
 const ARG_GATEWAY: &'static str = "gateway";
 const ARG_MAC: &'static str = "mac";
+const ARG_PROPERTY_ID: &'static str = "property-id";
 const ARG_PORT: &'static str = "port";
 const ARG_ONEWIRE_ADDR: &'static str = "onewire-addr";
 const ARG_BUS_ADDR: &'static str = "bus-addr";
@@ -375,6 +422,8 @@ const SUBCOMMAND_DISC_ONEWIRE: &'static str = "onewire-discover";
 const SUBCOMMAND_I2C_WRITE_READ: &'static str = "i2c-write-read";
 const SUBCOMMAND_SET_IP_SUB_GW: &'static str = "set-network-ip-subnet-gateway";
 const SUBCOMMAND_SET_MAC: &'static str = "set-network-mac";
+const SUBCOMMAND_LIST_PROPERTIES: &'static str = "list-properties";
+const SUBCOMMAND_GET_PROPERTY: &'static str = "get-properties";
 
 const PARAMETER_NO_ADDRESS: &str = "no-address";
 
@@ -390,6 +439,8 @@ enum Command {
     I2cWriteRead(Parameter, Vec<u8>, u8),
     SetNetIpSubGate(Parameter, Ipv4Addr, Ipv4Addr, Ipv4Addr),
     SetNetMac(Parameter, [u8; 6]),
+    ListProperties(Parameter, bool),
+    GetProperty(Parameter, Vec<u8>),
 }
 
 impl Command {
@@ -405,6 +456,8 @@ impl Command {
             Command::I2cWriteRead(params, _, _) => &params,
             Command::SetNetIpSubGate(params, _, _, _) => &params,
             Command::SetNetMac(params, _) => &params,
+            Command::ListProperties(params, _) => &params,
+            Command::GetProperty(params, _) => &params,
         }
     }
 }
@@ -430,6 +483,11 @@ impl RequestGenerator for Command {
                 Request::SetNetworkIpSubnetGateway(id, ip.octets(), sub.octets(), gate.octets())
             }
             Command::SetNetMac(_, mac) => Request::SetNetworkMac(id, mac.clone()),
+            Command::ListProperties(_, false) => Request::ListComponents(id),
+            Command::ListProperties(_, true) => Request::ListComponentsAndNames(id),
+            Command::GetProperty(_, pid) => {
+                Request::RetrieveProperty(id, pid.len().min(u8::MAX as usize) as u8)
+            }
         }
     }
 
@@ -453,6 +511,11 @@ impl RequestGenerator for Command {
             }
             Command::SetNetIpSubGate(_, _, _, _) => 0,
             Command::SetNetMac(_, _) => 0,
+            Command::ListProperties(_, _) => 0,
+            Command::GetProperty(_, pid) => {
+                let len = pid.len().min(u8::MAX as usize) as u8;
+                writer.write_all(&pid[..len as usize])?
+            }
         })
     }
 }
@@ -513,6 +576,7 @@ fn read_command() -> Command {
         )
         .subcommand(
             SubCommand::with_name(SUBCOMMAND_GET_NET_CONF)
+                .alias("get-net")
                 .alias("get-net-conf")
                 .alias("get-network-conf")
                 .alias("get-net-config")
@@ -609,6 +673,35 @@ fn read_command() -> Command {
                         .help("The new mac address for the device"),
                 ),
         )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_LIST_PROPERTIES)
+                .about("List the devices' properties")
+                .alias("list-props")
+                .alias("list")
+                .arg(
+                    Arg::with_name("names")
+                        .long("names")
+                        .short("n")
+                        .required(false)
+                        .takes_value(false)
+                        .help("Whether  to retrieve property names")
+                )
+
+        )
+        .subcommand(
+            SubCommand::with_name(SUBCOMMAND_GET_PROPERTY)
+                .about("Retrieves the value for the given property")
+                .alias("get-prop")
+                .alias("get")
+                .arg(
+                    Arg::with_name(ARG_PROPERTY_ID)
+                        .required(true)
+                        .index(1)
+                        .takes_value(true)
+                        .value_name("PROPERTY_ID")
+                        .help("The id of the property to retrieve"),
+                ),
+        )
         .get_matches();
 
     let ip = Ipv4Addr::from_str(matches.value_of(ARG_IP_ADDR).unwrap()).unwrap();
@@ -687,6 +780,20 @@ fn read_command() -> Command {
                 u8::from_str_radix(&mac[15..17], 16).unwrap(),
             ]
         }),
+        (SUBCOMMAND_LIST_PROPERTIES, m) => {
+            Command::ListProperties(params, m.map(|m| m.is_present("names")).unwrap_or(false))
+        }
+
+        (SUBCOMMAND_GET_PROPERTY, m) => {
+            let pid = m.unwrap().value_of(ARG_PROPERTY_ID).unwrap();
+            let mut vec = Vec::with_capacity(pid.len() / 3);
+            for i in 0..(pid.len() + 1) / 3 {
+                vec.push(u8::from_str_radix(&pid[3 * i..][..2], 16).unwrap());
+            }
+            println!("{:?}", vec);
+            Command::GetProperty(params, vec)
+        }
+
         _ => panic!("SubCommand not specified"),
     }
 }
