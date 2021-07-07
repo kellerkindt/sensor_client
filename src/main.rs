@@ -790,7 +790,6 @@ fn read_command() -> Command {
             for i in 0..(pid.len() + 1) / 3 {
                 vec.push(u8::from_str_radix(&pid[3 * i..][..2], 16).unwrap());
             }
-            println!("{:?}", vec);
             Command::GetProperty(params, vec)
         }
 
