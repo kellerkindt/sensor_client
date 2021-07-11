@@ -16,6 +16,7 @@ clap = "2.31.2"
 [dependencies.sensor_common]
 version = "*"
 path = "../sensor_common"
+features = ["std"]
 
 [dependencies.onewire]
 version = "*"

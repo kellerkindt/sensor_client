@@ -383,6 +383,90 @@ fn format_generic_format_type(
                 String::new()
             }
         }
+        Type::DynListPropertyReportV1 => {
+            let mut result = String::new();
+            let mut reports = Vec::new();
+            while read.available() > 0 {
+                let report = PropertyReportV1::read(read)?;
+                reports.push([
+                    report.id_formatted(),
+                    report
+                        .type_hint
+                        .map(|h| format!("{:?}", h))
+                        .unwrap_or_default(),
+                    report.description.unwrap_or_default(),
+                    format!("{:?}", report.complexity),
+                    format!(
+                        "{}{}",
+                        if report.read { "R" } else { "_" },
+                        if report.write { "W" } else { "_" },
+                    ),
+                ]);
+            }
+
+            let header = ["id", "type", "description", "complexity", "mode"];
+
+            let column_widths = reports
+                .iter()
+                .map(|columns| {
+                    [
+                        columns[0].len(),
+                        columns[1].len(),
+                        columns[2].len(),
+                        columns[3].len(),
+                        columns[4].len(),
+                    ]
+                })
+                .chain([[
+                    header[0].len(),
+                    header[1].len(),
+                    header[2].len(),
+                    header[3].len(),
+                    header[4].len(),
+                ]])
+                .reduce(|a, b| {
+                    [
+                        a[0].max(b[0]),
+                        a[1].max(b[1]),
+                        a[2].max(b[2]),
+                        a[3].max(b[3]),
+                        a[4].max(b[4]),
+                    ]
+                });
+
+            if let Some(widths) = column_widths {
+                fn print_line<const N: usize>(
+                    result: &mut String,
+                    width: [usize; N],
+                    data: [impl Display; N],
+                ) {
+                    use std::fmt::Write;
+                    for (column, width) in width.iter().enumerate() {
+                        write!(result, "   {:w$}", data[column], w = width).unwrap();
+                    }
+                    writeln!(result).unwrap();
+                }
+
+                print_line(&mut result, widths, header);
+                print_line(
+                    &mut result,
+                    widths,
+                    [
+                        core::iter::repeat('-').take(widths[0]).collect::<String>(),
+                        core::iter::repeat('-').take(widths[1]).collect::<String>(),
+                        core::iter::repeat('-').take(widths[2]).collect::<String>(),
+                        core::iter::repeat('-').take(widths[3]).collect::<String>(),
+                        core::iter::repeat('-').take(widths[4]).collect::<String>(),
+                    ],
+                );
+
+                for report in reports {
+                    print_line(&mut result, widths, report);
+                }
+            }
+
+            result
+        }
 
         Type::U128 => read_impl_for!(u128),
         Type::I128 => read_impl_for!(i128),
@@ -398,6 +482,8 @@ fn format_generic_format_type(
 }
 
 use clap::{App, AppSettings, Arg, SubCommand};
+use sensor_common::props::PropertyReportV1;
+use std::fmt::Display;
 use std::net::SocketAddrV4;
 use std::str::FromStr;
 
@@ -426,6 +512,7 @@ const SUBCOMMAND_LIST_PROPERTIES: &'static str = "list-properties";
 const SUBCOMMAND_GET_PROPERTY: &'static str = "get-properties";
 
 const PARAMETER_NO_ADDRESS: &str = "no-address";
+const FLAG_LIST_REPORT: &str = "list-report";
 
 #[derive(Clone, Debug)]
 enum Command {
@@ -484,7 +571,7 @@ impl RequestGenerator for Command {
             }
             Command::SetNetMac(_, mac) => Request::SetNetworkMac(id, mac.clone()),
             Command::ListProperties(_, false) => Request::ListComponents(id),
-            Command::ListProperties(_, true) => Request::ListComponentsAndNames(id),
+            Command::ListProperties(_, true) => Request::ListComponentsWithReportV1(id),
             Command::GetProperty(_, pid) => {
                 Request::RetrieveProperty(id, pid.len().min(u8::MAX as usize) as u8)
             }
@@ -679,9 +766,9 @@ fn read_command() -> Command {
                 .alias("list-props")
                 .alias("list")
                 .arg(
-                    Arg::with_name("names")
-                        .long("names")
-                        .short("n")
+                    Arg::with_name(FLAG_LIST_REPORT)
+                        .long("report")
+                        .short("r")
                         .required(false)
                         .takes_value(false)
                         .help("Whether  to retrieve property names")
@@ -780,9 +867,10 @@ fn read_command() -> Command {
                 u8::from_str_radix(&mac[15..17], 16).unwrap(),
             ]
         }),
-        (SUBCOMMAND_LIST_PROPERTIES, m) => {
-            Command::ListProperties(params, m.map(|m| m.is_present("names")).unwrap_or(false))
-        }
+        (SUBCOMMAND_LIST_PROPERTIES, m) => Command::ListProperties(
+            params,
+            m.map(|m| m.is_present(FLAG_LIST_REPORT)).unwrap_or(false),
+        ),
 
         (SUBCOMMAND_GET_PROPERTY, m) => {
             let pid = m.unwrap().value_of(ARG_PROPERTY_ID).unwrap();
