@@ -7,11 +7,14 @@ keywords = ["ethernet", "cli"]
 categories = ["network-programming", "command-line-interface"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kellerkindt/sensor_client"
+edition = "2018"
 
 [dependencies]
 byteorder = { version = "1.2.1", default-features = false }
 random = "0.12.2"
-clap = "2.31.2"
+clap = "3.0.0-beta.2"
+thiserror = "1.0.26"
+exitcode = "1.1.2"
 
 [dependencies.sensor_common]
 version = "*"
