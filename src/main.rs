@@ -12,6 +12,7 @@ use std::process::exit;
 use std::time::Duration;
 
 mod cli;
+mod client;
 
 #[derive(Debug, thiserror::Error)]
 enum CommandError {
