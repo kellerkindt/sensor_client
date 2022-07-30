@@ -15,7 +15,7 @@ name = "sensor_client"
 [dependencies]
 byteorder = { version = "1.2.1", default-features = false }
 random = "0.12.2"
-clap = "3.0.0-beta.2"
+clap = { version = "3.2.16", features = ["derive", "clap_derive"] }
 thiserror = "1.0.26"
 exitcode = "1.1.2"
 

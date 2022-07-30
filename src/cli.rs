@@ -1,14 +1,14 @@
-use clap::{AppSettings, Clap};
+use clap::{AppSettings, Parser, Subcommand};
 use onewire::Device;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
-#[derive(Debug, Clap)]
+#[derive(Debug, Parser)]
 #[clap(version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"))]
 #[clap(setting = AppSettings::SubcommandRequiredElseHelp)]
 #[clap(setting = AppSettings::ColoredHelp)]
 #[clap(setting = AppSettings::GlobalVersion)]
-#[clap(setting = AppSettings::VersionlessSubcommands)]
+// #[clap(setting = AppSettings::VersionlessSubcommands)]
 pub struct Args {
     /// The ip of the target device
     pub ip: Ipv4Addr,
@@ -25,7 +25,7 @@ pub struct Args {
     pub command: Command,
 }
 
-#[derive(Debug, Clap)]
+#[derive(Debug, Subcommand)]
 pub enum Command {
     /// Reads the device's version
     #[clap(alias = "version")]
@@ -77,37 +77,37 @@ pub enum Command {
     GetProperty(GetProperty),
 }
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct GetVersion;
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct GetInfo;
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct GetNetInfo;
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct GetErrDump;
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct I2cWriteRead {
     pub i2c_read_len: u8,
     pub i2c_write_bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct OnewireRead {
     /// OneWire addresses of the sensors to read
     pub sensor_address: Vec<Device>,
 }
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct CustomRead {
     /// The address of the bus to read from
     pub bus_address: u8,
 }
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct SetNetworkIpSubnetGateway {
     /// The new ip address for the device
     pub ip: Ipv4Addr,
@@ -117,7 +117,7 @@ pub struct SetNetworkIpSubnetGateway {
     pub gateway: Ipv4Addr,
 }
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct SetNetworkMac {
     /// The new mac address for the device
     pub mac: Mac,
@@ -148,14 +148,14 @@ impl FromStr for Mac {
     }
 }
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct ListProperties {
     /// Whether to not retrieve a full property report (only property ids)
     #[clap(short, long)]
     pub no_report: bool,
 }
 
-#[derive(Debug, Clap)]
+#[derive(Debug, clap::Args)]
 pub struct GetProperty {
     /// The id of  the property to retrieve
     pub property_id: PropertyId,

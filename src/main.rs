@@ -51,7 +51,7 @@ impl CommandError {
 }
 
 fn main() {
-    let args: cli::Args = <cli::Args as clap::Clap>::parse();
+    let args: cli::Args = <cli::Args as clap::Parser>::parse();
     let context = Context {
         ip: args.ip,
         port: args.port,
