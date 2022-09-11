@@ -440,21 +440,32 @@ fn format_generic_format_type(
             let mut result = String::new();
             let mut reports = Vec::new();
             while read.available() > 0 {
-                let report = PropertyReportV1::read(read)?;
-                reports.push([
-                    report.id_formatted(),
-                    report
-                        .type_hint
-                        .map(|h| format!("{:?}", h))
-                        .unwrap_or_default(),
-                    report.description.unwrap_or_default(),
-                    format!("{:?}", report.complexity),
-                    format!(
-                        "{}{}",
-                        if report.read { "R" } else { "_" },
-                        if report.write { "W" } else { "_" },
-                    ),
-                ]);
+                match PropertyReportV1::read(read) {
+                    Err(e) => {
+                        eprintln!(
+                            "Invalid PropertyReportV1 encountered at number={}: {:?}",
+                            reports.len(),
+                            e
+                        );
+                        break;
+                    }
+                    Ok(report) => {
+                        reports.push([
+                            report.id_formatted(),
+                            report
+                                .type_hint
+                                .map(|h| format!("{:?}", h))
+                                .unwrap_or_default(),
+                            report.description.unwrap_or_default(),
+                            format!("{:?}", report.complexity),
+                            format!(
+                                "{}{}",
+                                if report.read { "R" } else { "_" },
+                                if report.write { "W" } else { "_" },
+                            ),
+                        ]);
+                    }
+                }
             }
 
             let header = ["id", "type", "description", "complexity", "mode"];
